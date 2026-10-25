@@ -58,6 +58,32 @@ public sealed class SelectionPresetStoreTests : IDisposable
     }
 
     [Fact]
+    public void MatrixSelectionSurvivesAStoreReload()
+    {
+        var store = new SelectionPresetStore(_directory);
+        store.Add("矩阵选区", new SelectionSet(
+            SelectionMode.Matrix,
+            [new CaptureRegion(0, 0, 300, 200)],
+            new MatrixSpec(
+                new CaptureRegion(0, 0, 300, 200),
+                2,
+                2,
+                5,
+                5,
+                [new MatrixCell(2, 1)]),
+            Padding: 6));
+
+        var loaded = Assert.Single(new SelectionPresetStore(_directory).LoadAll());
+
+        Assert.Equal(SelectionMode.Matrix, loaded.Selection.Mode);
+        Assert.NotNull(loaded.Selection.Matrix);
+        Assert.Equal(2, loaded.Selection.Matrix!.Rows);
+        Assert.Equal(5, loaded.Selection.Matrix.GapX);
+        Assert.Equal(new MatrixCell(2, 1), Assert.Single(loaded.Selection.Matrix.ExcludedCells!));
+        Assert.Equal(6, loaded.Selection.Padding);
+    }
+
+    [Fact]
     public void DuplicatePresetNamesAreAllowed()
     {
         var store = new SelectionPresetStore(_directory);

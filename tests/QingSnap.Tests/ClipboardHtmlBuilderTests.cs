@@ -24,7 +24,7 @@ public sealed class ClipboardHtmlBuilderTests
         Assert.True(startHtml < startFragment);
         Assert.True(startFragment < endFragment);
         Assert.Equal(
-            "<html><body>\r\n<!--StartFragment-->",
+            "<html><head><meta charset=\"utf-8\"></head><body>\r\n<!--StartFragment-->",
             Encoding.UTF8.GetString(bytes[startHtml..startFragment]));
         Assert.Contains("Version:0.9", text);
     }

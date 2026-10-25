@@ -21,7 +21,8 @@ internal static class ClipboardHtmlBuilder
         "StartFragment:{2:0000000000}\r\n" +
         "EndFragment:{3:0000000000}\r\n";
 
-    private const string HtmlPrefix = "<html><body>\r\n<!--StartFragment-->";
+    private const string HtmlPrefix =
+        "<html><head><meta charset=\"utf-8\"></head><body>\r\n<!--StartFragment-->";
     private const string HtmlSuffix = "<!--EndFragment-->\r\n</body></html>";
 
     public static string BuildFragment(ClipboardTable table)

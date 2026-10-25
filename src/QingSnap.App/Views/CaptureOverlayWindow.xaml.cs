@@ -324,7 +324,7 @@ public partial class CaptureOverlayWindow : Window
             QuickTagPopup.IsOpen = false;
         }
 
-        if (CaptureToolbar.IsMouseOver)
+        if (CaptureToolbar.IsMouseOver || MatrixPanel.IsMouseOver)
         {
             return;
         }
@@ -966,7 +966,7 @@ public partial class CaptureOverlayWindow : Window
     {
         // The window-level right-click gesture cancels capture, but toolbar controls
         // must receive the gesture first so their own context menus can open.
-        if (CaptureToolbar.IsMouseOver)
+        if (CaptureToolbar.IsMouseOver || MatrixPanel.IsMouseOver)
         {
             return;
         }
@@ -1093,7 +1093,7 @@ public partial class CaptureOverlayWindow : Window
         LoadSelectionSet(SelectionSet.Single(CaptureRegion.FromRectangle(region)));
     }
 
-    private void LoadSelectionSet(SelectionSet set, bool useSetPadding = false)
+    internal void LoadSelectionSet(SelectionSet set, bool useSetPadding = false)
     {
         if (useSetPadding)
         {
@@ -1611,6 +1611,7 @@ public partial class CaptureOverlayWindow : Window
     {
         var baseBounds = GetSelectionUnionPixels();
         var hadMultiple = _selections.Count > 1;
+        var previousCount = _selections.Count;
         _selectionMode = SelectionMode.Matrix;
         _matrix = null;
         _matrixAtDragStart = null;
@@ -1623,6 +1624,11 @@ public partial class CaptureOverlayWindow : Window
         SetAnnotationTool(CaptureAnnotationTool.None);
         _annotationController.SetBounds(WpfRect.Empty, Surface.ActualWidth, Surface.ActualHeight);
         ClearSelections();
+        _lockedSelectionSize = null;
+        _lockedAspectRatio = null;
+        _aspectRatioMode = CaptureAspectRatioMode.Free;
+        UpdateFixedSizeUi();
+        UpdateAspectRatioButtons();
 
         if (baseBounds is not { Width: > 1, Height: > 1 } bounds)
         {
@@ -1638,7 +1644,7 @@ public partial class CaptureOverlayWindow : Window
         ShowAdjustmentBadge(
             Mouse.GetPosition(Root),
             hadMultiple
-                ? $"矩阵模式：已用 {_selections.Count} 个选区的外框作为基准"
+                ? $"矩阵模式：已用 {previousCount} 个选区的外框作为基准"
                 : "矩阵模式：拖动基准框移动，拖边角缩放；右键单元格排除/恢复");
     }
 

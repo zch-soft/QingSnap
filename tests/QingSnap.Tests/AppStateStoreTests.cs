@@ -77,6 +77,44 @@ public sealed class AppStateStoreTests
     }
 
     [Fact]
+    public void LastSelectionSetPreservesMatrixParametersAndExcludedCells()
+    {
+        var directory = CreateTemporaryDirectory();
+        try
+        {
+            var store = new AppStateStore(Path.Combine(directory, "state.json"));
+            store.SaveLastSelectionSet(new SelectionSet(
+                SelectionMode.Matrix,
+                [new CaptureRegion(10, 20, 30, 40)],
+                new MatrixSpec(
+                    new CaptureRegion(5, 6, 300, 200),
+                    2,
+                    3,
+                    4,
+                    6,
+                    [new MatrixCell(1, 2), new MatrixCell(2, 3)]),
+                Padding: 7));
+
+            var loaded = store.LoadLastSelectionSet();
+
+            Assert.NotNull(loaded);
+            Assert.Equal(SelectionMode.Matrix, loaded.Mode);
+            Assert.NotNull(loaded.Matrix);
+            Assert.Equal(new CaptureRegion(5, 6, 300, 200), loaded.Matrix!.Bounds);
+            Assert.Equal(2, loaded.Matrix.Rows);
+            Assert.Equal(3, loaded.Matrix.Columns);
+            Assert.Equal(4, loaded.Matrix.GapX);
+            Assert.Equal(6, loaded.Matrix.GapY);
+            Assert.Equal([new MatrixCell(1, 2), new MatrixCell(2, 3)], loaded.Matrix.ExcludedCells);
+            Assert.Equal(7, loaded.Padding);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void LegacyLastRegionProducesASingleSelectionSet()
     {
         var directory = CreateTemporaryDirectory();
