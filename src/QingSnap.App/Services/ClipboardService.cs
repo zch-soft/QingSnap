@@ -286,7 +286,9 @@ public sealed class ClipboardService : IDisposable
 
         var fragment = ClipboardHtmlBuilder.BuildFragment(
             new ClipboardTable(rows, columns, tableCells, cellPadding));
-        var html = ClipboardHtmlBuilder.BuildCfHtml(fragment);
+        // CF_HTML consumers expect a NUL-terminated UTF-8 payload; the offsets keep
+        // pointing at the same bytes because the terminator follows EndHTML.
+        var html = ClipboardHtmlBuilder.BuildCfHtml(fragment).Append((byte)0).ToArray();
         var json = Encoding.UTF8.GetBytes(CaptureSetClipboardFormatter.BuildDocumentJson(
             request,
             filePaths,

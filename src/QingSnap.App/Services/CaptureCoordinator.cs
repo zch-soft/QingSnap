@@ -818,7 +818,7 @@ public sealed class CaptureCoordinator
         {
             try
             {
-                copiedToClipboard = await CopyCaptureSetAsync(request, compositeRegion);
+                copiedToClipboard = await CopyCaptureSetAsync(request, globalRegions, compositeRegion);
             }
             catch (Exception exception)
             {
@@ -843,13 +843,14 @@ public sealed class CaptureCoordinator
 
     private async Task<bool> CopyCaptureSetAsync(
         CaptureOverlayActionEventArgs request,
+        IReadOnlyList<DrawingRectangle> globalRegions,
         DrawingRectangle compositeRegion)
     {
         try
         {
             var result = await _clipboardService.CopyCaptureSetAsync(new CaptureSetClipboardRequest(
                 request.Images,
-                request.Regions,
+                globalRegions.Select(CaptureRegion.FromRectangle).ToArray(),
                 request.Output.Mode,
                 request.Output.Matrix,
                 request.Output.Cells,

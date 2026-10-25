@@ -534,13 +534,14 @@
                                                 <RowDefinition Height="*" />
                                                 <RowDefinition Height="Auto" />
                                             </Grid.RowDefinitions>
-                                            <TextBlock FontFamily="{StaticResource DataFont}"
-                                                       FontSize="14"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="#FFF3F7F9"
-                                                       Text="{Binding DateText}" />
-                                            <StackPanel Grid.Row="1" Margin="0,15,0,0">
-                                                <Border Margin="0,0,0,7" Padding="6,2" HorizontalAlignment="Left"
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock FontFamily="{StaticResource DataFont}"
+                                                           FontSize="14"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="#FFF3F7F9"
+                                                           VerticalAlignment="Center"
+                                                           Text="{Binding DateText}" />
+                                                <Border Margin="10,0,0,0" Padding="6,2" VerticalAlignment="Center"
                                                         Background="#FF17303A" BorderBrush="#6676DFEE"
                                                         BorderThickness="1" CornerRadius="4">
                                                     <Border.Style>
@@ -557,6 +558,8 @@
                                                                Foreground="#FF76DFEE"
                                                                Text="{Binding GroupLabel, Mode=OneWay}" />
                                                 </Border>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Margin="0,15,0,0">
                                                 <TextBlock FontFamily="{StaticResource UiFont}" FontSize="12" Foreground="{StaticResource MutedBrush}">
                                                     <Run Text="尺寸  " /><Run Text="{Binding DimensionsText, Mode=OneWay}" Foreground="#FFD5DEE3" />
                                                 </TextBlock>

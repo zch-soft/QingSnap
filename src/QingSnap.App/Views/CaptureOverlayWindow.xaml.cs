@@ -1632,7 +1632,7 @@ public partial class CaptureOverlayWindow : Window
 
         if (baseBounds is not { Width: > 1, Height: > 1 } bounds)
         {
-            MatrixPanel.Visibility = Visibility.Collapsed;
+            ShowFullShade();
             ShowAdjustmentBadge(Mouse.GetPosition(Root), "矩阵模式：在画面上拖拽定义基准矩形");
             return;
         }
@@ -1664,7 +1664,7 @@ public partial class CaptureOverlayWindow : Window
         _matrixCellOrder.Clear();
         if (_selections.Count == 0)
         {
-            _annotationController.SetBounds(WpfRect.Empty, Surface.ActualWidth, Surface.ActualHeight);
+            ShowFullShade();
             return;
         }
 
@@ -2018,6 +2018,11 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
+        if (hit == DragMode.None)
+        {
+            return;
+        }
+
         _matrixAtDragStart = _matrix.Clone();
         _matrixDragCell = FindMatrixCellAt(point);
         _dragMode = hit;
@@ -2088,8 +2093,9 @@ public partial class CaptureOverlayWindow : Window
             var physicalCurrent = ToPhysicalPoint(point);
             var deltaX = physicalCurrent.X - physicalStart.X;
             var deltaY = physicalCurrent.Y - physicalStart.Y;
-            if (deltaX == 0 && deltaY == 0)
+            if (Math.Abs(deltaX) < 3 && Math.Abs(deltaY) < 3)
             {
+                // Keep tiny pointer jitter from turning a click-to-exclude into a move.
                 return;
             }
 
@@ -2477,7 +2483,7 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
-        Geometry? holes = null;
+        var holes = new GeometryGroup { FillRule = FillRule.Nonzero };
         foreach (var item in _selections)
         {
             if (item.Rect.IsEmpty)
@@ -2487,23 +2493,19 @@ public partial class CaptureOverlayWindow : Window
 
             var geometry = new RectangleGeometry(item.Rect);
             geometry.Freeze();
-            holes = holes is null
-                ? (Geometry)geometry
-                : Geometry.Combine(holes, geometry, GeometryCombineMode.Union, null);
+            holes.Children.Add(geometry);
         }
 
         if (!_smartPreview.IsEmpty)
         {
             var preview = new RectangleGeometry(_smartPreview);
             preview.Freeze();
-            holes = holes is null
-                ? (Geometry)preview
-                : Geometry.Combine(holes, preview, GeometryCombineMode.Union, null);
+            holes.Children.Add(preview);
         }
 
         var full = new RectangleGeometry(new WpfRect(0, 0, width, height));
         full.Freeze();
-        var mask = holes is null
+        var mask = holes.Children.Count == 0
             ? (Geometry)full
             : Geometry.Combine(full, holes, GeometryCombineMode.Exclude, null);
         mask.Freeze();
@@ -3136,11 +3138,13 @@ public partial class CaptureOverlayWindow : Window
         [
             ShadeMask,
             SelectionLayer,
+            MatrixLayer,
             SmartPreviewBorder,
             SelectionBorder,
             SizeBadge,
             HintBadge,
             CaptureToolbar,
+            MatrixPanel,
             QuickTagButton,
             SavePresetButton,
             AdjustmentBadge,
@@ -4196,6 +4200,13 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnToolbarSizeMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (_selectionMode == SelectionMode.Matrix)
+        {
+            ShowAdjustmentBadge(Mouse.GetPosition(Root), "矩阵模式请在矩阵面板调整行列与间隔");
+            e.Handled = true;
+            return;
+        }
+
         var region = GetLocalRegion();
         if (region is null)
         {
