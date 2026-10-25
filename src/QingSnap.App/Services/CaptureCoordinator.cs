@@ -726,6 +726,14 @@ public sealed class CaptureCoordinator
         }
 
         _stateStore.SaveLastSelectionSet(CreateGlobalSelection(globalRegions));
+        if (request.CompositeImage is { } compositeForPin)
+        {
+            _pinHistory.AddCapture(
+                compositeForPin,
+                savedPaths[0],
+                CaptureRegion.FromRectangle(compositeRegion));
+        }
+
         _historyWindow?.RefreshHistory();
 
         var copyRequested = forceCopy || _settingsService.Current.AutoCopy;

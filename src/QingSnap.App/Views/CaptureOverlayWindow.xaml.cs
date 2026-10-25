@@ -1935,7 +1935,10 @@ public partial class CaptureOverlayWindow : Window
 
     private void InvalidateOcrPrefetch()
     {
-        if (_creatingOcrPrefetch || _ocrService?.IsOcrAvailable != true || !_showActionToolbar)
+        if (_creatingOcrPrefetch ||
+            _selections.Count != 1 ||
+            _ocrService?.IsOcrAvailable != true ||
+            !_showActionToolbar)
         {
             return;
         }
@@ -1960,7 +1963,10 @@ public partial class CaptureOverlayWindow : Window
     private void OnOcrPrefetchTimerTick(object? sender, EventArgs e)
     {
         _ocrPrefetchTimer.Stop();
-        if (_ocrService?.IsOcrAvailable != true || _selection.IsEmpty || !IsVisible)
+        if (_ocrService?.IsOcrAvailable != true ||
+            _selections.Count != 1 ||
+            _selection.IsEmpty ||
+            !IsVisible)
         {
             return;
         }
@@ -2610,6 +2616,7 @@ public partial class CaptureOverlayWindow : Window
     private async void OnQrCodeClick(object sender, RoutedEventArgs e)
     {
         if (_qrCodeService is null || _clipboardService is null ||
+            _selections.Count != 1 ||
             GetLocalRegion() is not { } localRegion || _selection.IsEmpty)
         {
             ShowAdjustmentBadge(Mouse.GetPosition(Root), "二维码识别暂不可用");
