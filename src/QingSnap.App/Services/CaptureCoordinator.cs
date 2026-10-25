@@ -20,6 +20,7 @@ public sealed class CaptureCoordinator
     private readonly PinHistoryBuffer _pinHistory = new();
     private readonly SemaphoreSlim _pinRequestGate = new(1, 1);
     private HistoryWindow? _historyWindow;
+    private SelectionPresetManagerWindow? _presetWindow;
     private bool _isCapturing;
     private uint? _lastClipboardSequenceNumber;
 
@@ -208,6 +209,27 @@ public sealed class CaptureCoordinator
     }
 
     public void OpenHistoryDirectory() => _historyService.OpenHistoryDirectory();
+
+    public void OpenSelectionPresetManager()
+    {
+        if (_presetWindow is not null)
+        {
+            if (_presetWindow.WindowState == System.Windows.WindowState.Minimized)
+            {
+                _presetWindow.WindowState = System.Windows.WindowState.Normal;
+            }
+
+            _presetWindow.Activate();
+            return;
+        }
+
+        _presetWindow = new SelectionPresetManagerWindow(
+            _presetStore,
+            StartNamedSelectionCapture,
+            () => _stateStore.LoadLastSelectionSet());
+        _presetWindow.Closed += (_, _) => _presetWindow = null;
+        _presetWindow.Show();
+    }
 
     public void ExportDiagnostics()
     {

@@ -2090,11 +2090,15 @@ public partial class CaptureOverlayWindow : Window
             multiBox.IsValid ? multiBox : null);
     }
 
-    public SelectionSet? CreateSelectionSet()
+    public SelectionSet? CreateGlobalSelectionSet()
     {
         var regions = _selections
             .Where(item => item.Pixels.Width > 0 && item.Pixels.Height > 0)
-            .Select(item => CaptureRegion.FromRectangle(item.Pixels))
+            .Select(item => new CaptureRegion(
+                _snapshot.Bounds.X + item.Pixels.X,
+                _snapshot.Bounds.Y + item.Pixels.Y,
+                item.Pixels.Width,
+                item.Pixels.Height))
             .ToArray();
         return regions.Length == 0
             ? null
@@ -2871,7 +2875,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnSavePresetClick(object sender, RoutedEventArgs e)
     {
-        if (_presetStore is null || CreateSelectionSet() is not { } selection)
+        if (_presetStore is null || CreateGlobalSelectionSet() is not { } selection)
         {
             return;
         }
