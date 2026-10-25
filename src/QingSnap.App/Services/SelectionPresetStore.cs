@@ -145,6 +145,7 @@ public sealed class SelectionPresetStore
                 JsonOptions);
             return state?.Presets?
                 .Where(preset => preset.Id != Guid.Empty &&
+                                 !string.IsNullOrWhiteSpace(preset.Name) &&
                                  preset.Selection is { HasSelection: true })
                 .ToList() ?? [];
         }
