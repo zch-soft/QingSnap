@@ -1,6 +1,6 @@
 # QingSnap 多选区截图设计
 
-- 状态：第二阶段已实现（2026-10-25）；剪贴板逐格粘贴的本机实测受桌面环境限制，见 6.4.1 与 15.3
+- 状态：第二阶段已实现（2026-10-25）；已用 Excel 16.0 / Word 16.0 / WPS 12.0 实测剪贴板逐格粘贴，结果见 6.4.1
 - 日期：2026-10-25
 - 适用基线：`claude/multi-region-phase2`
 - 相关代码：[CaptureOverlayWindow.xaml.cs](../src/QingSnap.App/Views/CaptureOverlayWindow.xaml.cs)、[CaptureCoordinator.cs](../src/QingSnap.App/Services/CaptureCoordinator.cs)、[ClipboardService.cs](../src/QingSnap.App/Services/ClipboardService.cs)、[MatrixLayout.cs](../src/QingSnap.App/Services/MatrixLayout.cs)
@@ -330,36 +330,38 @@ public static IReadOnlyList<CaptureRegion> Calculate(
 
 | 项 | 结果 |
 |---|---|
-| 剪贴板 | 不可用：`OpenClipboard(NULL)` 返回 `FALSE`、`GetLastError=5`（拒绝访问），`GetOpenClipboardWindow()=0`；PowerShell / Python / .NET 结果一致 |
-| 会话 | WTS 会话为 Active，但前台窗口为 0（锁屏 / 无交互桌面） |
-| Excel | **本机未安装 Microsoft Excel**；`Excel.Application` 与 `KET.Application` 都由 WPS 表格 12.1.0.29680 接管 |
-| Word | Microsoft Word 16.0（`C:\Program Files\Microsoft Office\Root\Office16`） |
-| WPS | Writer / Spreadsheet 12.1.0.29680 |
+| Microsoft Excel | 16.0（`C:\Program Files\Microsoft Office\Root\Office16`）。WPS 运行时 `Excel.Application` 可能先绑定 WPS；用 `DispatchEx` 或退出 WPS 后指向真正的 Excel |
+| Microsoft Word | 16.0（同上路径） |
+| WPS Office | Writer / Spreadsheet 12.1.0.29680 |
+| 剪贴板 | 首次测试时桌面锁屏，`OpenClipboard` 返回错误 5；解锁后正常 |
+
+实测方法：用 `tools/QingSnap.ClipboardSpike` 以生产剪贴板写入器放入 2×3 矩阵（排除 (2,2)，共 5 张 240×140），再用 COM 在每个应用中新建文档并执行 Paste，读取图片数量、锚定单元格、尺寸与单元格内容。
+
+| 应用 | 结果 |
+|---|---|
+| Microsoft Excel 16.0 | 5 张浮动图片，锚定 `A1 / B1 / C1 / A8 / C8`，`Placement=xlMove`，单元格为空。矩阵的视觉行列正确，但**不是“嵌入单元格”图片**；第二行因首行图片高度落到第 8 行 |
+| Microsoft Word 16.0 | 1 个表格 + 5 个内嵌图片，位于 `r1c1 / r1c2 / r1c3 / r2c1 / r2c3`，(2,2) 为空；180×105 pt（= 240×140 px） |
+| WPS Writer 12.0 | 与 Word 完全一致：1 个表格 + 5 个内嵌图片，行列与排除格正确 |
+| WPS Spreadsheet 12.0 | 5 张浮动图片，锚定 `A1 / B1 / C1 / A2 / C2`（行紧邻），单元格为空；约 120×70 pt，约为 Word/Excel 的 2/3 |
 
 结论：
 
-- 由于剪贴板不可用，**没有执行真正的“Ctrl+V 粘贴”Spike**，Excel 365/2016、Word、WPS 的剪贴板逐格行为均未实测。
-- 退而验证了**同一份 HTML 表格**在 Office 中的导入行为（把 6.4 的表格写成 `.html` 文件后由应用打开；HTML 导入器与 HTML 剪贴板解析路径高度一致）：
-  - WPS 表格（`Excel.Application` 实际指向 WPS）：2×2 → 4 张图片，均为浮动图片，锚定 `A1 / B1 / A2 / B2`，行列布局正确；不是“嵌入单元格”。
-  - Microsoft Word 16.0：1 个表格 + 4 个内嵌图片，分别位于 `r1c1 / r1c2 / r2c1 / r2c2`，逐格正确（120×80 px 按 90×60 pt 缩放）。
-  - WPS Writer：同 Word，1 个表格 + 4 个内嵌图片，行列正确。
-- 因此：Word / WPS 文字可得到严格逐格内嵌图；WPS 表格可得到正确的矩阵视觉布局，但图片是浮动图片；Microsoft Excel 的真实行为仍待在有 Excel 的机器上确认。
+- **Word 与 WPS 文字**：严格逐格内嵌，满足设计目标。
+- **Excel 与 WPS 表格**：矩阵的视觉行列正确，但图片是浮动图片；Excel 不会把 HTML 粘贴结果自动变成“单元格内嵌图片”。如需严格的每格内嵌图，需要额外方案（导出 xlsx 并插入单元格图片），当前不做，保留单图 / 文件列表兜底。
+- WPS 表格对 HTML 图片的缩放比例与 Word/Excel 不同（约 2/3），属于 WPS 的换算差异；如需跨应用尺寸一致，可考虑按应用分别设置宽高（未做）。
+- 离线 HTML 导入代理测试（`--html` 生成同样的表格后由 Office 打开）与上述剪贴板结果一致。
 
-复现步骤（剪贴板可用时）：
+复现步骤：
 
 ```bash
 dotnet run --project tools/QingSnap.ClipboardSpike -- 2 3 skip-excluded
 ```
 
-然后在 Excel / Word / WPS 中新建文档按 `Ctrl+V`，检查图片数量、行列位置，以及图片是嵌入单元格、内嵌图片还是浮动图片。
-
-无剪贴板时可用离线代理：
+然后在 Excel / Word / WPS 中新建文档按 `Ctrl+V`，检查图片数量、行列位置，以及图片是嵌入单元格、内嵌图片还是浮动图片。无剪贴板时可用离线代理：
 
 ```bash
 dotnet run --project tools/QingSnap.ClipboardSpike -- html C:\Temp\qingsnap-html-spike
 ```
-
-生成与 6.4 相同的 HTML 表格，再由 Office 打开该 `.html` 文件检查布局。
 
 兜底（已实现）：无论目标应用是否采纳 HTML，剪贴板始终同时提供首图的 PNG 与 CF_DIB；设置页可开启 CF_HDROP 文件列表；单图输出仍可用；多图文件始终落盘。
 
@@ -666,21 +668,27 @@ public sealed record SelectionPreset(
 - 自动化测试 210 个全部通过（Debug），其中本阶段新增：矩阵布局与 clamp、矩阵/自由文件名、CF_HTML 头部偏移与转义、CF_DIB / PNG / DROPFILES 字节结构、临时目录清理、组标记读写、历史折叠、矩阵选区与预设的序列化往返。
 - 覆盖层集成测试（真实 `CaptureOverlayWindow` 实例、STA 线程）：从 `SelectionSet` 恢复 2×2 矩阵（间隔 10、排除 (1,2)）后，输出 3 张 145×145 图片，顺序为 `(1,1) (2,1) (2,2)`，文件名 `QingSnap_1_1 / 2_1 / 2_2`；`CreateGlobalSelectionSet` 返回带屏幕偏移与排除单元格的矩阵选区；同一窗口再载入自由选区后正确回到自由模式并输出 2 张图。
 - Debug / Release 构建 0 警告 0 错误。
-- HTML 表格离线代理测试：见 6.4.1（Word 16.0 与 WPS Writer 逐格内嵌；WPS 表格按单元格锚定浮动图片）。
+- **剪贴板逐格粘贴实测**（2×3、排除 (2,2)、5 张 240×140）：
+  - Microsoft Word 16.0：1 个表格 + 5 个内嵌图片，`r1c1/r1c2/r1c3/r2c1/r2c3`，(2,2) 为空。
+  - WPS Writer 12.0：与 Word 完全一致。
+  - Microsoft Excel 16.0：5 张浮动图片，锚定 `A1/B1/C1/A8/C8`，`Placement=xlMove`，单元格为空；矩阵视觉正确，但不是单元格内嵌图片。
+  - WPS Spreadsheet 12.0：5 张浮动图片，锚定 `A1/B1/C1/A2/C2`，单元格为空；尺寸约为 Word/Excel 的 2/3。
+- 应用已用本分支 Debug 构建成功启动（日志无异常）；离线 HTML 导入代理结果与剪贴板实测一致。
 
 ### 15.3 未验证
 
-- **真实剪贴板粘贴**：本次执行环境的剪贴板不可用（`OpenClipboard` 拒绝访问、无前台窗口），无法把 CF_HTML 放入剪贴板，也无法在 Office/WPS 中 `Ctrl+V`。
-- **应用级冒烟**：本机已有一个 QingSnap 实例占用单实例互斥量，无法启动本分支构建做整体冒烟；覆盖层 XAML 由集成测试真实实例化验证，历史/设置窗口的新增标记只通过编译与资源键检查。
-- **Microsoft Excel 365/2016**：本机未安装，`Excel.Application` 被 WPS 表格接管，Excel 的逐格粘贴行为未知。
 - 矩阵交互的人工回归：拖拽移动/缩放、面板输入与滚轮、单元格排除点击、不同 DPI（100%–200%）下的预览与输出。
+- 历史窗口“按组折叠”与设置页新增控件的人工视觉检查（已编译通过并成功启动应用）。
 - 大矩阵（接近 50×50）的 UI 流畅度、HTML 体积与剪贴板超时。
 - 剪贴板内容的持久化与剪贴板管理器（PowerToys、输入法等）的兼容性。
+- Microsoft Excel 365 的“Place in Cell”行为：16.0 实测为浮动图片；365 是否能把 HTML 粘贴结果放入单元格未验证。
 
 ### 15.4 已知限制与遗留
 
 - 矩阵模式下不做单独的比例锁定、固定尺寸、吸附对齐；`Tab` 不逐个切换单元格（矩阵只有一个基准框）。
 - 矩阵行列上限 50×50；单元格数很多时每个单元格都会创建视觉元素，极端配置下预览可能变慢。
 - 剪贴板图像集要求目标应用支持 HTML 图片（`file://` 路径）；不支持时只能得到首图。
+- Excel / WPS 表格把粘贴结果处理为浮动图片（锚定单元格），不是单元格内嵌图片；需要严格内嵌时应改用导出方案（未做）。
+- WPS 表格渲染 HTML 图片的尺寸约为 Word/Excel 的 2/3，属于 WPS 的换算差异。
 - 跨屏仍不支持；多选区/矩阵仍不支持标注、钉图、OCR、二维码、长截图。
 - 组标记文件是新增的隐藏 JSON；删除组目录时一并删除，不影响历史扫描。删除组内部分图片后，组标记里的“张数”仍是采集时的数量，不做实时校正。
