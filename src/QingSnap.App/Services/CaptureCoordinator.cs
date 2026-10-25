@@ -861,6 +861,10 @@ public sealed class CaptureCoordinator
                 _settingsService.Current.MultiImageClipboardFileDrop));
             return result.FilePaths.Count == request.Images.Count;
         }
+        catch (ClipboardBusyException)
+        {
+            throw;
+        }
         catch (Exception exception)
         {
             DiagnosticLog.Error(

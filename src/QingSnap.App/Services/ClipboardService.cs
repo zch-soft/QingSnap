@@ -329,14 +329,16 @@ public sealed class ClipboardService : IDisposable
     {
         if (!OpenClipboard(IntPtr.Zero))
         {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法打开系统剪贴板。");
+            var error = Marshal.GetLastWin32Error();
+            throw new ExternalException($"无法打开系统剪贴板（错误 {error}）。", error);
         }
 
         try
         {
             if (!EmptyClipboard())
             {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法清空系统剪贴板。");
+                var error = Marshal.GetLastWin32Error();
+                throw new ExternalException($"无法清空系统剪贴板（错误 {error}）。", error);
             }
 
             foreach (var payload in payloads)
@@ -356,9 +358,9 @@ public sealed class ClipboardService : IDisposable
                 {
                     var error = Marshal.GetLastWin32Error();
                     GlobalFree(memory);
-                    throw new Win32Exception(
-                        error,
-                        $"无法写入剪贴板格式 {payload.FormatName ?? format.ToString()}。");
+                    throw new ExternalException(
+                        $"无法写入剪贴板格式 {payload.FormatName ?? format.ToString()}（错误 {error}）。",
+                        error);
                 }
             }
         }
@@ -666,7 +668,7 @@ public sealed class ClipboardService : IDisposable
         }
     }
 
-    private static InvalidOperationException CreateClipboardBusyException(Exception? exception) =>
+    private static ClipboardBusyException CreateClipboardBusyException(Exception? exception) =>
         new("剪贴板被其他程序持续占用；截图已保存在记录中，请稍后再次复制。", exception);
 
     public void Dispose() => _queue.Dispose();
@@ -791,3 +793,6 @@ public sealed record ClipboardImageContent(
     string SourceName,
     CaptureRegion? PreferredRegion,
     uint SequenceNumber);
+
+internal sealed class ClipboardBusyException(string message, Exception? innerException)
+    : InvalidOperationException(message, innerException);
