@@ -389,7 +389,10 @@ public partial class CaptureOverlayWindow : Window
         UpdateMagnifier(pointer);
         if (_dragMode == DragMode.None &&
             !CaptureToolbar.IsMouseOver &&
+            !QuickTagPopup.IsOpen &&
+            !SelectionListPopup.IsOpen &&
             _settings.SmartWindowSelection &&
+            _annotationController.ActiveTool == CaptureAnnotationTool.None &&
             !_isAnnotating)
         {
             if (FindSelectionAt(pointer) < 0)
@@ -414,6 +417,7 @@ public partial class CaptureOverlayWindow : Window
 
         if (CaptureToolbar.IsMouseOver && _dragMode == DragMode.None)
         {
+            ClearSmartPreview();
             Surface.Cursor = WpfCursors.Arrow;
             return;
         }
@@ -1598,12 +1602,18 @@ public partial class CaptureOverlayWindow : Window
 
         var toDipX = Surface.ActualWidth / Math.Max(1, _snapshot.Bounds.Width);
         var toDipY = Surface.ActualHeight / Math.Max(1, _snapshot.Bounds.Height);
-        _smartPreview = new WpfRect(
+        var preview = new WpfRect(
             (leftPx - _snapshot.Bounds.X) * toDipX,
             (topPx - _snapshot.Bounds.Y) * toDipY,
             (rightPx - leftPx) * toDipX,
             (bottomPx - topPx) * toDipY);
-        ShowSmartPreview(_smartPreview);
+        if (_smartPreview == preview && SmartPreviewBorder.Visibility == Visibility.Visible)
+        {
+            return;
+        }
+
+        _smartPreview = preview;
+        ShowSmartPreview(preview);
     }
 
     private void ShowSmartPreview(WpfRect rect)
