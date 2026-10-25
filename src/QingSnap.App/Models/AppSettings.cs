@@ -34,6 +34,14 @@ public sealed record AppSettings
 
     public bool ShowQuickCaptureTags { get; init; } = true;
 
+    public string MultiRegionOutputMode { get; init; } = "SingleImage";
+
+    public int MultiRegionPadding { get; init; }
+
+    public string MultiImageFileNamePrefix { get; init; } = "QingSnap";
+
+    public string MultiImageClipboardLayout { get; init; } = "Auto";
+
     public string CloseInteraction { get; init; } = "Escape";
 
     public string OcrEngine { get; init; } = "None";

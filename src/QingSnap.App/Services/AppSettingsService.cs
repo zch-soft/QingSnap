@@ -86,6 +86,20 @@ public sealed class AppSettingsService
                 : "PNG",
             JpegQuality = Math.Clamp(settings.JpegQuality, 50, 100),
             CaptureDelaySeconds = Math.Clamp(settings.CaptureDelaySeconds, 0, 10),
+            MultiRegionOutputMode = string.Equals(
+                settings.MultiRegionOutputMode,
+                "MultipleFiles",
+                StringComparison.OrdinalIgnoreCase)
+                ? "MultipleFiles"
+                : "SingleImage",
+            MultiRegionPadding = Math.Clamp(settings.MultiRegionPadding, 0, 200),
+            MultiImageFileNamePrefix = SelectionOutputNaming.NormalizePrefix(settings.MultiImageFileNamePrefix),
+            MultiImageClipboardLayout = settings.MultiImageClipboardLayout?.ToUpperInvariant() switch
+            {
+                "ROW" => "Row",
+                "COLUMN" => "Column",
+                _ => "Auto"
+            },
             CloseInteraction = string.Equals(
                 settings.CloseInteraction,
                 "Button",

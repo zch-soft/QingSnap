@@ -107,6 +107,40 @@ public sealed class AppSettingsServiceTests
     public void HotkeyGestureValidationSupportsOnlyFunctionKeysAndModifiers(string gesture, bool expected) =>
         Assert.Equal(expected, GlobalHotkeyService.IsValidGesture(gesture));
 
+    [Fact]
+    public void MultiRegionSettingsAreNormalized()
+    {
+        var normalized = AppSettingsService.Normalize(new AppSettings
+        {
+            MultiRegionOutputMode = "multiplefiles",
+            MultiRegionPadding = 999,
+            MultiImageFileNamePrefix = "A/B:C",
+            MultiImageClipboardLayout = "row"
+        });
+
+        Assert.Equal("MultipleFiles", normalized.MultiRegionOutputMode);
+        Assert.Equal(200, normalized.MultiRegionPadding);
+        Assert.Equal("A_B_C", normalized.MultiImageFileNamePrefix);
+        Assert.Equal("Row", normalized.MultiImageClipboardLayout);
+    }
+
+    [Fact]
+    public void UnknownMultiRegionSettingsFallBackToSafeDefaults()
+    {
+        var normalized = AppSettingsService.Normalize(new AppSettings
+        {
+            MultiRegionOutputMode = "SomethingElse",
+            MultiRegionPadding = -5,
+            MultiImageFileNamePrefix = "   ",
+            MultiImageClipboardLayout = "Diagonal"
+        });
+
+        Assert.Equal("SingleImage", normalized.MultiRegionOutputMode);
+        Assert.Equal(0, normalized.MultiRegionPadding);
+        Assert.Equal("QingSnap", normalized.MultiImageFileNamePrefix);
+        Assert.Equal("Auto", normalized.MultiImageClipboardLayout);
+    }
+
     private static void AssertBinding(
         AppSettings settings,
         HotkeyAction action,
