@@ -1,9 +1,9 @@
 # QingSnap 多选区截图设计
 
-- 状态：第一阶段已实现（2026-10-25）；矩阵选区与 CF_HTML 剪贴板待第二阶段
+- 状态：第二阶段已实现（2026-10-25）；剪贴板逐格粘贴的本机实测受桌面环境限制，见 6.4.1 与 15.3
 - 日期：2026-10-25
-- 适用基线：`worktree-multi-region-phase1`
-- 相关代码：[CaptureOverlayWindow.xaml.cs](../src/QingSnap.App/Views/CaptureOverlayWindow.xaml.cs)、[CaptureCoordinator.cs](../src/QingSnap.App/Services/CaptureCoordinator.cs)、[ClipboardService.cs](../src/QingSnap.App/Services/ClipboardService.cs)
+- 适用基线：`claude/multi-region-phase2`
+- 相关代码：[CaptureOverlayWindow.xaml.cs](../src/QingSnap.App/Views/CaptureOverlayWindow.xaml.cs)、[CaptureCoordinator.cs](../src/QingSnap.App/Services/CaptureCoordinator.cs)、[ClipboardService.cs](../src/QingSnap.App/Services/ClipboardService.cs)、[MatrixLayout.cs](../src/QingSnap.App/Services/MatrixLayout.cs)
 
 ## 1. 背景与目标
 
@@ -324,6 +324,45 @@ public static IReadOnlyList<CaptureRegion> Calculate(
 2. 提供"复制为文件列表"；
 3. 增加"导出为 xlsx（图片按格插入）"作为重方案，需引入 OOXML 或第三方库，第一阶段不做。
 
+#### 6.4.1 Spike 记录（2026-10-25）
+
+本机环境：
+
+| 项 | 结果 |
+|---|---|
+| 剪贴板 | 不可用：`OpenClipboard(NULL)` 返回 `FALSE`、`GetLastError=5`（拒绝访问），`GetOpenClipboardWindow()=0`；PowerShell / Python / .NET 结果一致 |
+| 会话 | WTS 会话为 Active，但前台窗口为 0（锁屏 / 无交互桌面） |
+| Excel | **本机未安装 Microsoft Excel**；`Excel.Application` 与 `KET.Application` 都由 WPS 表格 12.1.0.29680 接管 |
+| Word | Microsoft Word 16.0（`C:\Program Files\Microsoft Office\Root\Office16`） |
+| WPS | Writer / Spreadsheet 12.1.0.29680 |
+
+结论：
+
+- 由于剪贴板不可用，**没有执行真正的“Ctrl+V 粘贴”Spike**，Excel 365/2016、Word、WPS 的剪贴板逐格行为均未实测。
+- 退而验证了**同一份 HTML 表格**在 Office 中的导入行为（把 6.4 的表格写成 `.html` 文件后由应用打开；HTML 导入器与 HTML 剪贴板解析路径高度一致）：
+  - WPS 表格（`Excel.Application` 实际指向 WPS）：2×2 → 4 张图片，均为浮动图片，锚定 `A1 / B1 / A2 / B2`，行列布局正确；不是“嵌入单元格”。
+  - Microsoft Word 16.0：1 个表格 + 4 个内嵌图片，分别位于 `r1c1 / r1c2 / r2c1 / r2c2`，逐格正确（120×80 px 按 90×60 pt 缩放）。
+  - WPS Writer：同 Word，1 个表格 + 4 个内嵌图片，行列正确。
+- 因此：Word / WPS 文字可得到严格逐格内嵌图；WPS 表格可得到正确的矩阵视觉布局，但图片是浮动图片；Microsoft Excel 的真实行为仍待在有 Excel 的机器上确认。
+
+复现步骤（剪贴板可用时）：
+
+```bash
+dotnet run --project tools/QingSnap.ClipboardSpike -- 2 3 skip-excluded
+```
+
+然后在 Excel / Word / WPS 中新建文档按 `Ctrl+V`，检查图片数量、行列位置，以及图片是嵌入单元格、内嵌图片还是浮动图片。
+
+无剪贴板时可用离线代理：
+
+```bash
+dotnet run --project tools/QingSnap.ClipboardSpike -- html C:\Temp\qingsnap-html-spike
+```
+
+生成与 6.4 相同的 HTML 表格，再由 Office 打开该 `.html` 文件检查布局。
+
+兜底（已实现）：无论目标应用是否采纳 HTML，剪贴板始终同时提供首图的 PNG 与 CF_DIB；设置页可开启 CF_HDROP 文件列表；单图输出仍可用；多图文件始终落盘。
+
 ## 7. 历史与命名选区
 
 这里的"历史"指现有的**历史选区**（按 `R` 循环的最近 5 个，`CaptureRegionHistory.Capacity = 5`），不是截图记录历史。
@@ -471,7 +510,7 @@ public sealed record SelectionPreset(
 - 多选区下禁用标注/钉图/OCR/二维码；
 - 单元测试：选区集合、矩阵布局、透明掩码、文件名、预设存储。
 
-### 第二阶段：矩阵选区 + 剪贴板图像集
+### 第二阶段：矩阵选区 + 剪贴板图像集（已完成，见 15）
 
 - 矩阵面板、实时预览、行列/间隔校验；
 - 单元格排除/恢复；
@@ -581,3 +620,66 @@ public sealed record SelectionPreset(
 - 跨屏选区不支持；加载命名选区时超出当前屏幕的区域会被丢弃并回到全屏选择。
 - 多选区输出不包含标注。
 
+
+## 15. 第二阶段实施记录（2026-10-25）
+
+### 15.1 已完成
+
+**矩阵选区**
+
+- 工具栏新增“自由 / 矩阵”切换，快捷键 `M`；进入矩阵模式时以当前活动选区（多选区时为全部选区的外框）作为基准矩形，没有选区时先拖拽定义基准。
+- 矩阵面板：行数、列数、行间隔、列间隔。修改即重算预览；滚轮增减（`Shift` 步进 5）；越界时按可用空间 clamp，输入框标黄并显示实际生效值与单元格尺寸；非法文本标红，内部仍使用上一次合法值预览。
+- 布局按 5.2 的整数像素余数分配；行列上限 50，且不超过基准矩形的像素宽高。
+- 矩阵整体拖动 / 拖边角缩放 / 方向键与 `WASD` 微调（`Shift` 10px）；矩阵模式下不单独拖拽单元格。
+- 单击单元格排除或恢复（被排除单元格显示 × 与虚线），至少保留一格；右键菜单提供“恢复全部单元格 / 重新框选基准矩形 / 切换为自由选区 / 清空矩阵”。
+- 切回自由模式时矩阵“炸开”为独立选区，保留当前布局；`Esc` 在拖拽中只取消本次拖拽。
+- 矩阵模式下禁用标注、钉图、OCR、二维码、长截图（含 1×1 矩阵），`RequestAction` 与 OCR / 二维码入口均有守卫。
+- 命名选区、`Shift+F1`“重复上次范围”会保存和恢复矩阵参数、排除单元格与外扩边距。
+
+**矩阵输出**
+
+- 多图模式：`{Prefix}_{行号}_{列号}.png`（行/列从 1 开始，按最大行列号补零），自由模式仍为 `{Prefix}_{序号}`；被排除的单元格不输出且不重新编号。
+- 输出仍写入历史目录下的组目录；同时写入 `.qingsnap-group.json`（版本、GroupId、模式、行列、张数、创建时间）。
+- 单图模式仍输出透明合成图；矩阵只保留一个单元格时按该单元格裁剪，而不是按基准框。
+- 保存到文件、复制、自动复制使用同一套命名与分组逻辑。
+
+**剪贴板图像集**
+
+- 一次写入多个格式：`PNG`、`CF_DIB`（首图，32bpp 自下而上）、`HTML Format`（CF_HTML，UTF-8 字节偏移、`meta charset=utf-8`）、`QingSnap.CaptureSet.v2`（JSON：模式、行列、间隔、边距、每格行列号/临时路径/区域、创建时间）、可选 `CF_HDROP`。
+- 矩阵为 R×C 表格；自由选区默认 N×1，可在设置中选择固定一列或一行。
+- 单元格间隔用 `<td>` 内边距表达（`gap/2`，上限 24px）；图片尺寸按 96 DPI 换算为 CSS 像素，高 DPI 截图不会变成两倍大。
+- 临时目录 `%TEMP%\QingSnap\Clipboard\{guid}\`；启动时和每次复制前清理 24 小时前的目录，当前目录不会被删除；文件被 Office 占用时清理失败只记录日志。
+- HTML 写入失败时自动回退为复制透明合成图；即使 HTML 未被采纳，PNG/DIB 仍可用于单图粘贴。
+
+**历史按组折叠**
+
+- 历史卡片显示组标记（如“矩阵 3×3 · 8 张”），图标模式显示“组 N”。
+- 顶部“按组折叠”开关：同一组的文件只保留一张，右键可“显示同组全部”；关闭后恢复完整列表。
+- 组信息来源是组目录中的 `.qingsnap-group.json`，不依赖数据库迁移；旧的历史图片不受影响。
+
+**设置**
+
+- 多选区设置区新增“多图复制到表格的排布”（自动 / 一列 / 一行）与“同时提供文件列表（CF_HDROP）”。
+
+### 15.2 已验证
+
+- 自动化测试 210 个全部通过（Debug），其中本阶段新增：矩阵布局与 clamp、矩阵/自由文件名、CF_HTML 头部偏移与转义、CF_DIB / PNG / DROPFILES 字节结构、临时目录清理、组标记读写、历史折叠、矩阵选区与预设的序列化往返。
+- 覆盖层集成测试（真实 `CaptureOverlayWindow` 实例、STA 线程）：从 `SelectionSet` 恢复 2×2 矩阵（间隔 10、排除 (1,2)）后，输出 3 张 145×145 图片，顺序为 `(1,1) (2,1) (2,2)`，文件名 `QingSnap_1_1 / 2_1 / 2_2`；`CreateGlobalSelectionSet` 返回带屏幕偏移与排除单元格的矩阵选区；同一窗口再载入自由选区后正确回到自由模式并输出 2 张图。
+- Debug / Release 构建 0 警告 0 错误。
+- HTML 表格离线代理测试：见 6.4.1（Word 16.0 与 WPS Writer 逐格内嵌；WPS 表格按单元格锚定浮动图片）。
+
+### 15.3 未验证
+
+- **真实剪贴板粘贴**：本次执行环境的剪贴板不可用（`OpenClipboard` 拒绝访问、无前台窗口），无法把 CF_HTML 放入剪贴板，也无法在 Office/WPS 中 `Ctrl+V`。
+- **Microsoft Excel 365/2016**：本机未安装，`Excel.Application` 被 WPS 表格接管，Excel 的逐格粘贴行为未知。
+- 矩阵交互的人工回归：拖拽移动/缩放、面板输入与滚轮、单元格排除点击、不同 DPI（100%–200%）下的预览与输出。
+- 大矩阵（接近 50×50）的 UI 流畅度、HTML 体积与剪贴板超时。
+- 剪贴板内容的持久化与剪贴板管理器（PowerToys、输入法等）的兼容性。
+
+### 15.4 已知限制与遗留
+
+- 矩阵模式下不做单独的比例锁定、固定尺寸、吸附对齐；`Tab` 不逐个切换单元格（矩阵只有一个基准框）。
+- 矩阵行列上限 50×50；单元格数很多时每个单元格都会创建视觉元素，极端配置下预览可能变慢。
+- 剪贴板图像集要求目标应用支持 HTML 图片（`file://` 路径）；不支持时只能得到首图。
+- 跨屏仍不支持；多选区/矩阵仍不支持标注、钉图、OCR、二维码、长截图。
+- 组标记文件是新增的隐藏 JSON；删除组目录时一并删除，不影响历史扫描。
