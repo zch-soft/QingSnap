@@ -777,34 +777,20 @@ public partial class CaptureOverlayWindow : Window
 
     private void MoveSelection(Point point)
     {
-        if ((_lockedAspectRatio is not null || _lockedSelectionSize is not null) &&
-            _selectionPixelAtDragStart is { Width: > 0, Height: > 0 } pixelStart)
+        if (_selectionPixelAtDragStart is not { Width: > 0, Height: > 0 } pixelStart)
         {
-            var physicalStart = ToPhysicalPoint(_dragStart);
-            var physicalCurrent = ToPhysicalPoint(point);
-            var pixelLeft = Math.Clamp(
-                pixelStart.Left + physicalCurrent.X - physicalStart.X,
-                0,
-                Math.Max(0, _snapshot.Bounds.Width - pixelStart.Width));
-            var pixelTop = Math.Clamp(
-                pixelStart.Top + physicalCurrent.Y - physicalStart.Y,
-                0,
-                Math.Max(0, _snapshot.Bounds.Height - pixelStart.Height));
-            SetSelectionFromPixels(new DrawingRectangle(pixelLeft, pixelTop, pixelStart.Width, pixelStart.Height));
             return;
         }
 
-        var deltaX = point.X - _dragStart.X;
-        var deltaY = point.Y - _dragStart.Y;
-        var left = Math.Clamp(
-            _selectionAtDragStart.Left + deltaX,
-            0,
-            Math.Max(0, Surface.ActualWidth - _selectionAtDragStart.Width));
-        var top = Math.Clamp(
-            _selectionAtDragStart.Top + deltaY,
-            0,
-            Math.Max(0, Surface.ActualHeight - _selectionAtDragStart.Height));
-        SetSelection(new WpfRect(left, top, _selectionAtDragStart.Width, _selectionAtDragStart.Height));
+        // 以物理像素为单位平移：DIP 坐标按浮点平移后，DIP→像素的 floor/ceil 取整会随
+        // 位置变化来回切换，导致移动过程中选区宽高出现 1 像素抖动。
+        var physicalStart = ToPhysicalPoint(_dragStart);
+        var physicalCurrent = ToPhysicalPoint(point);
+        SetSelectionFromPixels(CaptureFixedSizeConstraint.Move(
+            pixelStart,
+            physicalCurrent.X - physicalStart.X,
+            physicalCurrent.Y - physicalStart.Y,
+            new DrawingRectangle(0, 0, _snapshot.Bounds.Width, _snapshot.Bounds.Height)));
     }
 
     private void ResizeSelection(Point point)
