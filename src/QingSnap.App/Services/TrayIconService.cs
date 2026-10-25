@@ -65,7 +65,8 @@ public sealed class TrayIconService : IDisposable
 
     private void ClearMenu()
     {
-        foreach (ToolStripItem item in _menu.Items)
+        var items = _menu.Items.Cast<ToolStripItem>().ToArray();
+        foreach (var item in items)
         {
             item.Dispose();
         }
