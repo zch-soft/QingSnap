@@ -668,17 +668,20 @@ public sealed class CaptureCoordinator
                 }
                 break;
             case CaptureOverlayAction.Save:
-                if (ShouldOutputMultipleFiles(request))
                 {
-                    SaveSelectionSetAs(request);
+                    var saved = ShouldOutputMultipleFiles(request)
+                        ? SaveSelectionSetAs(request)
+                        : SaveImageAs(
+                            request.CompositeImage ?? request.Image,
+                            ShouldForcePng(request));
+                    if (saved)
+                    {
+                        _stateStore.SaveLastSelectionSet(
+                            CreateGlobalSelection(globalRegions, request.Output.Padding));
+                    }
+
+                    break;
                 }
-                else
-                {
-                    SaveImageAs(
-                        request.CompositeImage ?? request.Image,
-                        ShouldForcePng(request));
-                }
-                break;
         }
     }
 
@@ -779,7 +782,7 @@ public sealed class CaptureCoordinator
                 savedPaths));
     }
 
-    private void SaveSelectionSetAs(CaptureOverlayActionEventArgs request)
+    private bool SaveSelectionSetAs(CaptureOverlayActionEventArgs request)
     {
         var dialog = new Microsoft.Win32.OpenFolderDialog
         {
@@ -788,7 +791,7 @@ public sealed class CaptureCoordinator
         };
         if (dialog.ShowDialog() != true)
         {
-            return;
+            return false;
         }
 
         var images = request.Output.Images;
@@ -813,7 +816,7 @@ public sealed class CaptureCoordinator
                 System.Windows.MessageBoxImage.Question);
             if (answer != System.Windows.MessageBoxResult.Yes)
             {
-                return;
+                return false;
             }
         }
 
@@ -825,6 +828,7 @@ public sealed class CaptureCoordinator
         DiagnosticLog.Info(
             "Capture",
             $"Exported {images.Count} regions to {dialog.FolderName}.");
+        return true;
     }
 
     private string CreateHistoryGroupName()
@@ -889,7 +893,7 @@ public sealed class CaptureCoordinator
         }
     }
 
-    private void SaveImageAs(
+    private bool SaveImageAs(
         System.Windows.Media.Imaging.BitmapSource image,
         bool forcePng = false)
     {
@@ -909,10 +913,11 @@ public sealed class CaptureCoordinator
         };
         if (dialog.ShowDialog() != true)
         {
-            return;
+            return false;
         }
 
         SaveBitmap(image, dialog.FileName, forcePng);
+        return true;
     }
 
     private void SaveBitmap(
