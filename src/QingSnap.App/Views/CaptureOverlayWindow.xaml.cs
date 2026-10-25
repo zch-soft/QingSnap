@@ -3217,7 +3217,7 @@ public partial class CaptureOverlayWindow : Window
             return null;
         }
 
-        var cells = matrixMode
+        var cells = matrixMode && _matrixCellOrder.Count == _selections.Count
             ? valid.Select(entry => _matrixCellOrder[entry.Index]).ToArray()
             : null;
         var matrix = matrixMode && _matrix is not null
