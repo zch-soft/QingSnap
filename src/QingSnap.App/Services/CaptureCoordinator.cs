@@ -563,7 +563,8 @@ public sealed class CaptureCoordinator
         Task<OcrRecognitionResult>? prefetchedOcr = null,
         bool isLongCapture = false,
         CaptureHistoryContext? sourceMetadata = null,
-        IReadOnlyList<string>? tags = null)
+        IReadOnlyList<string>? tags = null,
+        bool forcePng = false)
     {
         var (imagePath, savedRegion) = SaveCaptureToHistory(
             image,
@@ -571,7 +572,8 @@ public sealed class CaptureCoordinator
             prefetchedOcr,
             isLongCapture,
             sourceMetadata,
-            tags);
+            tags,
+            forcePng);
         var copyRequested = forceCopy || _settingsService.Current.AutoCopy;
         var copiedToClipboard = false;
         if (copyRequested)
@@ -648,7 +650,8 @@ public sealed class CaptureCoordinator
                         forceCopy: request.Action == CaptureOverlayAction.Copy,
                         request.PrefetchedOcr,
                         sourceMetadata: sourceMetadata,
-                        tags: request.Tags);
+                        tags: request.Tags,
+                        forcePng: ShouldForcePng(request));
                     // CompleteCaptureAsync stores the padded composite region; keep the
                     // actual selection set so "repeat last" does not accumulate padding.
                     _stateStore.SaveLastSelectionSet(CreateGlobalSelection(globalRegions));
@@ -670,7 +673,9 @@ public sealed class CaptureCoordinator
                 }
                 else
                 {
-                    SaveImageAs(request.CompositeImage ?? request.Image);
+                    SaveImageAs(
+                        request.CompositeImage ?? request.Image,
+                        ShouldForcePng(request));
                 }
                 break;
         }
@@ -682,6 +687,9 @@ public sealed class CaptureCoordinator
             _settingsService.Current.MultiRegionOutputMode,
             "MultipleFiles",
             StringComparison.OrdinalIgnoreCase);
+
+    private bool ShouldForcePng(CaptureOverlayActionEventArgs request) =>
+        request.Regions.Count > 1 || _settingsService.Current.MultiRegionPadding > 0;
 
     private SelectionSet CreateGlobalSelection(IReadOnlyList<DrawingRectangle> regions) =>
         new(
@@ -836,10 +844,13 @@ public sealed class CaptureCoordinator
         Task<OcrRecognitionResult>? prefetchedOcr = null,
         bool isLongCapture = false,
         CaptureHistoryContext? sourceMetadata = null,
-        IReadOnlyList<string>? tags = null)
+        IReadOnlyList<string>? tags = null,
+        bool forcePng = false)
     {
         var captureMetadata = sourceMetadata ?? CaptureSourceMetadataService.Create(region, isLongCapture);
-        var imagePath = _historyService.Save(image, captureMetadata);
+        var imagePath = forcePng
+            ? _historyService.SavePng(image, captureMetadata)
+            : _historyService.Save(image, captureMetadata);
         if (tags is { Count: > 0 })
         {
             _ = AttachCaptureTagsAsync(imagePath, tags);
@@ -874,9 +885,11 @@ public sealed class CaptureCoordinator
         }
     }
 
-    private void SaveImageAs(System.Windows.Media.Imaging.BitmapSource image)
+    private void SaveImageAs(
+        System.Windows.Media.Imaging.BitmapSource image,
+        bool forcePng = false)
     {
-        var format = _settingsService.Current.OutputFormat;
+        var format = forcePng ? "PNG" : _settingsService.Current.OutputFormat;
         var extension = format == "JPG" ? ".jpg" : format == "BMP" ? ".bmp" : ".png";
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
@@ -895,12 +908,15 @@ public sealed class CaptureCoordinator
             return;
         }
 
-        SaveBitmap(image, dialog.FileName);
+        SaveBitmap(image, dialog.FileName, forcePng);
     }
 
-    private void SaveBitmap(System.Windows.Media.Imaging.BitmapSource image, string path)
+    private void SaveBitmap(
+        System.Windows.Media.Imaging.BitmapSource image,
+        string path,
+        bool forcePng = false)
     {
-        var format = _settingsService.Current.OutputFormat;
+        var format = forcePng ? "PNG" : _settingsService.Current.OutputFormat;
         System.Windows.Media.Imaging.BitmapEncoder encoder = format switch
         {
             "JPG" => new System.Windows.Media.Imaging.JpegBitmapEncoder

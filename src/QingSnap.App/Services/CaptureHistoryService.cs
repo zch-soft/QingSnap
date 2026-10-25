@@ -53,20 +53,24 @@ public sealed class CaptureHistoryService : IDisposable
     private string SearchIndexDirectory => Path.Combine(HistoryDirectory, ".qingsnap-index");
 
     public string Save(BitmapSource image, CaptureHistoryContext? context = null) =>
-        SaveCore(image, context, relativeDirectory: null, fileName: null);
+        SaveCore(image, context, relativeDirectory: null, fileName: null, forcePng: false);
+
+    public string SavePng(BitmapSource image, CaptureHistoryContext? context = null) =>
+        SaveCore(image, context, relativeDirectory: null, fileName: null, forcePng: true);
 
     public string SaveWithFileName(
         BitmapSource image,
         string relativeDirectory,
         string fileName,
         CaptureHistoryContext? context = null) =>
-        SaveCore(image, context, relativeDirectory, fileName);
+        SaveCore(image, context, relativeDirectory, fileName, forcePng: false);
 
     private string SaveCore(
         BitmapSource image,
         CaptureHistoryContext? context,
         string? relativeDirectory,
-        string? fileName)
+        string? fileName,
+        bool forcePng)
     {
         var now = DateTime.Now;
         var historyRoot = Path.GetFullPath(HistoryDirectory);
@@ -84,7 +88,7 @@ public sealed class CaptureHistoryService : IDisposable
         Directory.CreateDirectory(directory);
 
         CleanupExpiredItems();
-        var format = _settingsService.Current.OutputFormat;
+        var format = forcePng ? "PNG" : _settingsService.Current.OutputFormat;
         var extension = format == "JPG" ? ".jpg" : format == "BMP" ? ".bmp" : ".png";
         var path = Path.Combine(directory, NormalizeFileName(fileName, now, extension));
         BitmapEncoder encoder = format switch

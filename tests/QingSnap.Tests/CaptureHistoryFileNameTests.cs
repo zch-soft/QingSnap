@@ -43,6 +43,18 @@ public sealed class CaptureHistoryFileNameTests : IDisposable
     }
 
     [Fact]
+    public void SavePngOverridesTheConfiguredJpgFormat()
+    {
+        var settings = new AppSettingsService(_directory);
+        settings.Save(settings.Current with { OutputFormat = "JPG" });
+        using var history = new CaptureHistoryService(settings);
+
+        var path = history.SavePng(CreateSolidImage());
+
+        Assert.Equal(".png", Path.GetExtension(path));
+    }
+
+    [Fact]
     public void SaveWithFileNameRejectsDirectoriesOutsideTheHistoryRoot()
     {
         using var history = CreateHistoryService();
