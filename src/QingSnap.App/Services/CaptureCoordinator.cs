@@ -640,7 +640,7 @@ public sealed class CaptureCoordinator
                 }
             case CaptureOverlayAction.Copy:
             case CaptureOverlayAction.Confirm:
-                if (request.Regions.Count == 1)
+                if (!ShouldOutputMultipleFiles(request))
                 {
                     await CompleteCaptureAsync(
                         request.CompositeImage ?? request.Image,
@@ -649,6 +649,10 @@ public sealed class CaptureCoordinator
                         request.PrefetchedOcr,
                         sourceMetadata: sourceMetadata,
                         tags: request.Tags);
+                    if (request.Regions.Count > 1)
+                    {
+                        _stateStore.SaveLastSelectionSet(CreateGlobalSelection(globalRegions));
+                    }
                 }
                 else
                 {
@@ -661,17 +665,30 @@ public sealed class CaptureCoordinator
                 }
                 break;
             case CaptureOverlayAction.Save:
-                if (request.Regions.Count == 1)
+                if (ShouldOutputMultipleFiles(request))
                 {
-                    SaveImageAs(request.CompositeImage ?? request.Image);
+                    SaveSelectionSetAs(request);
                 }
                 else
                 {
-                    SaveSelectionSetAs(request);
+                    SaveImageAs(request.CompositeImage ?? request.Image);
                 }
                 break;
         }
     }
+
+    private bool ShouldOutputMultipleFiles(CaptureOverlayActionEventArgs request) =>
+        request.Regions.Count > 1 &&
+        string.Equals(
+            _settingsService.Current.MultiRegionOutputMode,
+            "MultipleFiles",
+            StringComparison.OrdinalIgnoreCase);
+
+    private SelectionSet CreateGlobalSelection(IReadOnlyList<DrawingRectangle> regions) =>
+        new(
+            QingSnap.App.Models.SelectionMode.Free,
+            regions.Select(CaptureRegion.FromRectangle).ToArray(),
+            Padding: Math.Clamp(_settingsService.Current.MultiRegionPadding, 0, 200));
 
     private async Task CompleteCaptureSetAsync(
         CaptureOverlayActionEventArgs request,
@@ -708,10 +725,7 @@ public sealed class CaptureCoordinator
             }
         }
 
-        _stateStore.SaveLastSelectionSet(new SelectionSet(
-            QingSnap.App.Models.SelectionMode.Free,
-            globalRegions.Select(CaptureRegion.FromRectangle).ToArray(),
-            Padding: Math.Clamp(_settingsService.Current.MultiRegionPadding, 0, 200)));
+        _stateStore.SaveLastSelectionSet(CreateGlobalSelection(globalRegions));
         _historyWindow?.RefreshHistory();
 
         var copyRequested = forceCopy || _settingsService.Current.AutoCopy;
