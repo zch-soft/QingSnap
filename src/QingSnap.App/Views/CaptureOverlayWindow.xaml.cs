@@ -1525,6 +1525,15 @@ public partial class CaptureOverlayWindow : Window
         SavePresetButton.Visibility = _showActionToolbar && _selections.Count > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
+        SelectionListButton.IsEnabled = _selections.Count > 0;
+        SelectionListButton.Visibility = _showActionToolbar && _selections.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        if (SelectionListPopup.IsOpen)
+        {
+            Dispatcher.BeginInvoke(new Action(RebuildSelectionList));
+        }
 
         if (multi && _annotationController.ActiveTool != CaptureAnnotationTool.None)
         {
@@ -1588,6 +1597,7 @@ public partial class CaptureOverlayWindow : Window
         CaptureToolbar.Visibility = Visibility.Collapsed;
         QuickTagButton.Visibility = Visibility.Collapsed;
         QuickTagPopup.IsOpen = false;
+        SelectionListPopup.IsOpen = false;
         HintBadge.Visibility = Visibility.Collapsed;
         foreach (var mark in _cornerMarks)
         {
@@ -1692,6 +1702,7 @@ public partial class CaptureOverlayWindow : Window
         CaptureToolbar.Visibility = Visibility.Collapsed;
         QuickTagButton.Visibility = Visibility.Collapsed;
         QuickTagPopup.IsOpen = false;
+        SelectionListPopup.IsOpen = false;
         HintBadge.Visibility = Visibility.Visible;
 
         foreach (var mark in _cornerMarks)
@@ -1789,6 +1800,8 @@ public partial class CaptureOverlayWindow : Window
             CaptureToolbar.Visibility = Visibility.Collapsed;
             QuickTagButton.Visibility = Visibility.Collapsed;
             SavePresetButton.Visibility = Visibility.Collapsed;
+            SelectionListButton.Visibility = Visibility.Collapsed;
+            SelectionListPopup.IsOpen = false;
             QuickTagPopup.IsOpen = false;
             return;
         }
@@ -1797,6 +1810,9 @@ public partial class CaptureOverlayWindow : Window
             ? Visibility.Visible
             : Visibility.Collapsed;
         SavePresetButton.Visibility = _selections.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        SelectionListButton.Visibility = _selections.Count > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
         if (!_settings.ShowQuickCaptureTags)
@@ -2885,6 +2901,97 @@ public partial class CaptureOverlayWindow : Window
         ShowAdjustmentBadge(
             Mouse.GetPosition(Root),
             $"已保存命名选区：{preset.Name}（可在管理窗口重命名）");
+    }
+
+    private void OnSelectionListClick(object sender, RoutedEventArgs e)
+    {
+        if (_selections.Count == 0)
+        {
+            return;
+        }
+
+        if (SelectionListPopup.IsOpen)
+        {
+            SelectionListPopup.IsOpen = false;
+            return;
+        }
+
+        RebuildSelectionList();
+        SelectionListPopup.PlacementTarget = SelectionListButton;
+        SelectionListPopup.IsOpen = true;
+    }
+
+    private void RebuildSelectionList()
+    {
+        SelectionListPanel.Children.Clear();
+        SelectionListSummaryText.Text = $"{_selections.Count} 个";
+        for (var index = 0; index < _selections.Count; index++)
+        {
+            var item = _selections[index];
+            var active = index == _activeSelectionIndex;
+            var row = new DockPanel
+            {
+                LastChildFill = true,
+                Margin = new Thickness(0, 0, 0, 4)
+            };
+            var delete = new WpfButton
+            {
+                Content = "×",
+                Width = 26,
+                Height = 26,
+                Padding = new Thickness(0),
+                Margin = new Thickness(4, 0, 0, 0),
+                ToolTip = "删除该选区",
+                Foreground = new SolidColorBrush(MediaColor.FromRgb(255, 113, 128)),
+                Background = new SolidColorBrush(MediaColor.FromRgb(22, 36, 46)),
+                BorderBrush = new SolidColorBrush(MediaColor.FromArgb(0x55, 0x76, 0xDF, 0xEE)),
+                BorderThickness = new Thickness(1),
+                Cursor = WpfCursors.Hand
+            };
+            delete.Click += (_, _) => RemoveSelectionAt(index);
+            DockPanel.SetDock(delete, Dock.Right);
+            row.Children.Add(delete);
+
+            var activate = new Border
+            {
+                Background = new SolidColorBrush(active
+                    ? MediaColor.FromRgb(44, 76, 88)
+                    : MediaColor.FromRgb(16, 29, 37)),
+                BorderBrush = new SolidColorBrush(MediaColor.FromArgb(0x55, 0x76, 0xDF, 0xEE)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8, 5, 8, 5),
+                Cursor = WpfCursors.Hand,
+                Child = new TextBlock
+                {
+                    FontFamily = FindResource("DataFont") as System.Windows.Media.FontFamily
+                        ?? new System.Windows.Media.FontFamily("Consolas"),
+                    FontSize = 10.5,
+                    Foreground = new SolidColorBrush(active
+                        ? MediaColor.FromRgb(118, 223, 238)
+                        : MediaColor.FromRgb(197, 210, 216)),
+                    Text = $"#{index + 1}   {item.Pixels.Width} × {item.Pixels.Height}   ({item.Pixels.X}, {item.Pixels.Y})"
+                }
+            };
+            activate.MouseLeftButtonDown += (_, args) =>
+            {
+                ActivateSelection(index);
+                args.Handled = true;
+            };
+            row.Children.Add(activate);
+            SelectionListPanel.Children.Add(row);
+        }
+    }
+
+    private void RemoveSelectionAt(int index)
+    {
+        if (index < 0 || index >= _selections.Count)
+        {
+            return;
+        }
+
+        _activeSelectionIndex = index;
+        RemoveActiveSelection();
     }
 
     private void OnToolbarSizeMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
