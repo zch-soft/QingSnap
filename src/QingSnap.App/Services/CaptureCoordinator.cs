@@ -654,7 +654,8 @@ public sealed class CaptureCoordinator
                         forcePng: ShouldForcePng(request));
                     // CompleteCaptureAsync stores the padded composite region; keep the
                     // actual selection set so "repeat last" does not accumulate padding.
-                    _stateStore.SaveLastSelectionSet(CreateGlobalSelection(globalRegions));
+                    _stateStore.SaveLastSelectionSet(
+                        CreateGlobalSelection(globalRegions, request.Output.Padding));
                 }
                 else
                 {
@@ -689,13 +690,15 @@ public sealed class CaptureCoordinator
             StringComparison.OrdinalIgnoreCase);
 
     private bool ShouldForcePng(CaptureOverlayActionEventArgs request) =>
-        request.Regions.Count > 1 || _settingsService.Current.MultiRegionPadding > 0;
+        request.Output.HasTransparency;
 
-    private SelectionSet CreateGlobalSelection(IReadOnlyList<DrawingRectangle> regions) =>
+    private SelectionSet CreateGlobalSelection(
+        IReadOnlyList<DrawingRectangle> regions,
+        int padding) =>
         new(
             QingSnap.App.Models.SelectionMode.Free,
             regions.Select(CaptureRegion.FromRectangle).ToArray(),
-            Padding: Math.Clamp(_settingsService.Current.MultiRegionPadding, 0, 200));
+            Padding: Math.Clamp(padding, 0, 200));
 
     private async Task CompleteCaptureSetAsync(
         CaptureOverlayActionEventArgs request,
@@ -732,7 +735,8 @@ public sealed class CaptureCoordinator
             }
         }
 
-        _stateStore.SaveLastSelectionSet(CreateGlobalSelection(globalRegions));
+        _stateStore.SaveLastSelectionSet(
+            CreateGlobalSelection(globalRegions, request.Output.Padding));
         if (request.CompositeImage is { } compositeForPin)
         {
             _pinHistory.AddCapture(

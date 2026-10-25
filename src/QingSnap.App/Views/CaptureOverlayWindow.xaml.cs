@@ -80,6 +80,7 @@ public partial class CaptureOverlayWindow : Window
     private readonly List<SelectionItem> _selections = [];
     private int _activeSelectionIndex = -1;
     private bool _dragCreatedSelection;
+    private int? _selectionPaddingOverride;
 
     private SelectionItem? ActiveSelection =>
         _activeSelectionIndex >= 0 && _activeSelectionIndex < _selections.Count
@@ -236,7 +237,7 @@ public partial class CaptureOverlayWindow : Window
 
         if (_initialSelectionSet is { HasSelection: true } initialSelectionSet)
         {
-            LoadSelectionSet(initialSelectionSet);
+            LoadSelectionSet(initialSelectionSet, useSetPadding: true);
         }
         else if (_initialLocalRegion is { Width: > 0, Height: > 0 } initialRegion)
         {
@@ -933,11 +934,17 @@ public partial class CaptureOverlayWindow : Window
         _lockedSelectionSize = null;
         UpdateFixedSizeUi();
         SetAspectRatioMode(CaptureAspectRatioMode.Free, adjustSelection: false);
+        _selectionPaddingOverride = null;
         LoadSelectionSet(SelectionSet.Single(CaptureRegion.FromRectangle(region)));
     }
 
-    private void LoadSelectionSet(SelectionSet set)
+    private void LoadSelectionSet(SelectionSet set, bool useSetPadding = false)
     {
+        if (useSetPadding)
+        {
+            _selectionPaddingOverride = Math.Clamp(set.Padding, 0, 200);
+        }
+
         ClearSelections();
         _annotationController.Reset();
         foreach (var region in set.Regions.Where(region => region.IsValid))
@@ -2102,7 +2109,7 @@ public partial class CaptureOverlayWindow : Window
             ActivateSelection(0);
         }
 
-        var padding = Math.Clamp(_settings.MultiRegionPadding, 0, 200);
+        var padding = EffectivePadding;
         if (regions.Length == 1)
         {
             var image = CreateSelectedImage();
@@ -2125,7 +2132,8 @@ public partial class CaptureOverlayWindow : Window
                 [image],
                 regions,
                 composite,
-                box.IsValid ? box : null);
+                box.IsValid ? box : null,
+                padding);
         }
 
         var images = regions
@@ -2140,7 +2148,8 @@ public partial class CaptureOverlayWindow : Window
             images,
             regions,
             multiComposite,
-            multiBox.IsValid ? multiBox : null);
+            multiBox.IsValid ? multiBox : null,
+            padding);
     }
 
     public SelectionSet? CreateGlobalSelectionSet()
@@ -2158,7 +2167,7 @@ public partial class CaptureOverlayWindow : Window
             : new SelectionSet(
                 QingSnap.App.Models.SelectionMode.Free,
                 regions,
-                Padding: Math.Clamp(_settings.MultiRegionPadding, 0, 200));
+                Padding: EffectivePadding);
     }
 
     private DrawingRectangle ToPhysicalRectangle(WpfRect rect)
@@ -3279,6 +3288,9 @@ public partial class CaptureOverlayWindow : Window
 
     private DrawingRectangle CapturePixelBounds =>
         new(0, 0, _snapshot.Bounds.Width, _snapshot.Bounds.Height);
+
+    private int EffectivePadding =>
+        Math.Clamp(_selectionPaddingOverride ?? _settings.MultiRegionPadding, 0, 200);
 
     private void UpdateAspectRatioButtons()
     {
