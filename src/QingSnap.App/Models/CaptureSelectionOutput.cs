@@ -7,11 +7,16 @@ public sealed record CaptureSelectionOutput(
     IReadOnlyList<CaptureRegion> Regions,
     BitmapSource? CompositeImage,
     CaptureRegion? CompositeRegion,
-    int Padding = 0)
+    int Padding = 0,
+    SelectionMode Mode = SelectionMode.Free,
+    MatrixSpec? Matrix = null,
+    IReadOnlyList<MatrixCell>? Cells = null)
 {
     public bool IsSingle => Images.Count == 1;
 
     public bool HasTransparency => Images.Count > 1 || Padding > 0;
+
+    public bool IsMatrix => Mode == SelectionMode.Matrix && Matrix is not null;
 
     public BitmapSource PrimaryImage =>
         Images.Count > 0

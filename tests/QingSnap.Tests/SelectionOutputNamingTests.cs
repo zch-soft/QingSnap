@@ -1,3 +1,4 @@
+using QingSnap.App.Models;
 using QingSnap.App.Services;
 using Xunit;
 
@@ -48,5 +49,32 @@ public sealed class SelectionOutputNamingTests
             "JPG"));
         Assert.Equal("A_B_C_1.png", SelectionOutputNaming.FreeFileName("A/B:C", 1, 1, "png"));
         Assert.Equal("QingSnap_1.png", SelectionOutputNaming.FreeFileName("  ", 1, 1, string.Empty));
+    }
+
+    [Fact]
+    public void MultiFileNameUsesMatrixCellsAndKeepsOriginalRowAndColumnNumbers()
+    {
+        var matrix = new MatrixSpec(new CaptureRegion(0, 0, 300, 300), 3, 3, 0, 0);
+        MatrixCell[] cells =
+        [
+            new(1, 2),
+            new(1, 3),
+            new(3, 1)
+        ];
+
+        Assert.Equal(
+            ["QingSnap_1_2.png", "QingSnap_1_3.png", "QingSnap_3_1.png"],
+            Enumerable.Range(0, cells.Length)
+                .Select(index => SelectionOutputNaming.MultiFileName(
+                    "QingSnap", index, cells.Length, matrix, cells, ".png")));
+    }
+
+    [Fact]
+    public void MultiFileNameFallsBackToSequentialNamesWithoutMatrixCells()
+    {
+        Assert.Equal(
+            ["QingSnap_1.png", "QingSnap_2.png"],
+            new[] { 0, 1 }.Select(index => SelectionOutputNaming.MultiFileName(
+                "QingSnap", index, 2, null, null, ".png")));
     }
 }

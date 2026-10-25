@@ -42,6 +42,8 @@ public sealed record AppSettings
 
     public string MultiImageClipboardLayout { get; init; } = "Auto";
 
+    public bool MultiImageClipboardFileDrop { get; init; }
+
     public string CloseInteraction { get; init; } = "Escape";
 
     public string OcrEngine { get; init; } = "None";

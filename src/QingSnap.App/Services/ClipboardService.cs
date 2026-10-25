@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -16,6 +17,8 @@ public sealed class ClipboardService : IDisposable
     private const string CaptureRegionFormat = "QingSnap.CaptureRegion.v1";
     private const int ClipbrdECantOpen = unchecked((int)0x800401D0);
     private const uint CfUnicodeText = 13;
+    private const uint CfDib = 8;
+    private const uint CfHDrop = 15;
     private const uint GmemMoveable = 0x0002;
     private static readonly TimeSpan ClipboardWriteTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan ClipboardReadTimeout = TimeSpan.FromSeconds(4);
@@ -25,12 +28,16 @@ public sealed class ClipboardService : IDisposable
         ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff"
     };
     private readonly StaClipboardQueue _queue = new();
+    private readonly ClipboardTempFileStore _tempStore = new();
 
     public Task CopyImageAsync(BitmapSource image) =>
         _queue.InvokeAsync(() => SetImage(FreezeImage(image), null));
 
     public Task CopyCaptureImageAsync(BitmapSource image, CaptureRegion region) =>
         _queue.InvokeAsync(() => SetImage(FreezeImage(image), region));
+
+    public Task<CaptureSetClipboardResult> CopyCaptureSetAsync(CaptureSetClipboardRequest request) =>
+        _queue.InvokeAsync(() => SetCaptureSet(request));
 
     public Task<ClipboardImageContent?> TryGetImageAsync() =>
         _queue.InvokeAsync(TryGetImageCore);
@@ -233,6 +240,169 @@ public sealed class ClipboardService : IDisposable
             DiagnosticLog.Warning(
                 "Clipboard",
                 $"图片已经复制，但暂时无法持久化；程序运行期间仍可正常粘贴。{DescribeClipboardOwner()} {exception.Message}");
+        }
+    }
+
+    private CaptureSetClipboardResult SetCaptureSet(CaptureSetClipboardRequest request)
+    {
+        if (request.Images.Count == 0)
+        {
+            throw new InvalidOperationException("没有可复制到剪贴板的图像。");
+        }
+
+        _tempStore.CleanupExpired();
+        var directory = _tempStore.CreateSessionDirectory();
+        var images = request.Images.Select(FreezeImage).ToArray();
+        var (rows, columns, positions) = CaptureSetClipboardFormatter.BuildGrid(
+            request.Mode,
+            images.Length,
+            request.Matrix,
+            request.Cells,
+            request.Layout);
+        var filePaths = new string[images.Length];
+        for (var index = 0; index < images.Length; index++)
+        {
+            var fileName = SelectionOutputNaming.MultiFileName(
+                request.Prefix,
+                index,
+                images.Length,
+                request.Matrix,
+                request.Cells,
+                ".png");
+            filePaths[index] = _tempStore.WritePng(directory, fileName, images[index]);
+        }
+
+        var gap = Math.Max(request.Matrix?.GapX ?? 0, request.Matrix?.GapY ?? 0);
+        var cellPadding = Math.Clamp(gap / 2, 0, 24);
+        var tableCells = new Dictionary<(int Row, int Column), ClipboardTableCell>();
+        for (var index = 0; index < images.Length; index++)
+        {
+            var position = positions[index];
+            tableCells[(position.Row, position.Column)] = new ClipboardTableCell(
+                filePaths[index],
+                ClipboardHtmlBuilder.ToCssPixels(images[index].PixelWidth, images[index].DpiX),
+                ClipboardHtmlBuilder.ToCssPixels(images[index].PixelHeight, images[index].DpiY));
+        }
+
+        var fragment = ClipboardHtmlBuilder.BuildFragment(
+            new ClipboardTable(rows, columns, tableCells, cellPadding));
+        var html = ClipboardHtmlBuilder.BuildCfHtml(fragment);
+        var json = Encoding.UTF8.GetBytes(CaptureSetClipboardFormatter.BuildDocumentJson(
+            request,
+            filePaths,
+            rows,
+            columns,
+            DateTimeOffset.Now));
+
+        var payloads = new List<ClipboardFormatPayload>
+        {
+            new("PNG", ClipboardImageFormats.EncodePng(images[0])),
+            new("HTML Format", html),
+            new(CaptureSetClipboardFormatter.CaptureSetFormatName, json),
+            new(CfDib, ClipboardImageFormats.BuildDib(images[0]))
+        };
+        if (request.PreferredRegion is { } region)
+        {
+            payloads.Add(new(
+                CaptureRegionFormat,
+                Encoding.UTF8.GetBytes($"{region.X},{region.Y},{region.Width},{region.Height}")));
+        }
+
+        if (request.IncludeFileDrop)
+        {
+            payloads.Add(new(CfHDrop, ClipboardImageFormats.BuildFileDrop(filePaths)));
+        }
+
+        ExecuteWithClipboardRetry(
+            () => SetRawClipboardFormats(payloads),
+            ClipboardWriteTimeout,
+            "复制图像集");
+        DiagnosticLog.Info(
+            "Clipboard",
+            $"已复制图像集：{images.Length} 张，{rows}×{columns} 表格，HTML {html.Length} 字节，临时目录 {directory}。");
+        return new CaptureSetClipboardResult(directory, filePaths, rows, columns, html.Length);
+    }
+
+    private static void SetRawClipboardFormats(IReadOnlyList<ClipboardFormatPayload> payloads)
+    {
+        if (!OpenClipboard(IntPtr.Zero))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法打开系统剪贴板。");
+        }
+
+        try
+        {
+            if (!EmptyClipboard())
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法清空系统剪贴板。");
+            }
+
+            foreach (var payload in payloads)
+            {
+                var format = payload.FormatName is { } name
+                    ? RegisterClipboardFormat(name)
+                    : payload.FormatId;
+                if (format == 0)
+                {
+                    throw new Win32Exception(
+                        Marshal.GetLastWin32Error(),
+                        $"无法注册剪贴板格式 {payload.FormatName}。");
+                }
+
+                var memory = AllocGlobal(payload.Data);
+                if (SetClipboardData(format, memory) == IntPtr.Zero)
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    GlobalFree(memory);
+                    throw new Win32Exception(
+                        error,
+                        $"无法写入剪贴板格式 {payload.FormatName ?? format.ToString()}。");
+                }
+            }
+        }
+        finally
+        {
+            CloseClipboard();
+        }
+    }
+
+    private static IntPtr AllocGlobal(byte[] data)
+    {
+        var memory = GlobalAlloc(GmemMoveable, (nuint)Math.Max(1, data.Length));
+        if (memory == IntPtr.Zero)
+        {
+            throw new OutOfMemoryException("无法为剪贴板分配内存。");
+        }
+
+        var target = GlobalLock(memory);
+        if (target == IntPtr.Zero)
+        {
+            GlobalFree(memory);
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法锁定剪贴板内存。");
+        }
+
+        try
+        {
+            Marshal.Copy(data, 0, target, data.Length);
+        }
+        finally
+        {
+            GlobalUnlock(memory);
+        }
+
+        return memory;
+    }
+
+    private readonly record struct ClipboardFormatPayload(uint FormatId, string? FormatName, byte[] Data)
+    {
+        public ClipboardFormatPayload(string formatName, byte[] data)
+            : this(0, formatName, data)
+        {
+        }
+
+        public ClipboardFormatPayload(uint formatId, byte[] data)
+            : this(formatId, null, data)
+        {
         }
     }
 
@@ -582,6 +752,9 @@ public sealed class ClipboardService : IDisposable
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool OpenClipboard(IntPtr owner);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint RegisterClipboardFormat(string formatName);
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetOpenClipboardWindow();

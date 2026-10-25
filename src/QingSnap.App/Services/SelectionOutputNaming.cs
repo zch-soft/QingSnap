@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using QingSnap.App.Models;
 
 namespace QingSnap.App.Services;
 
@@ -45,6 +46,23 @@ internal static class SelectionOutputNaming
         var rowDigits = Math.Max(1, rows.ToString(CultureInfo.InvariantCulture).Length);
         var columnDigits = Math.Max(1, columns.ToString(CultureInfo.InvariantCulture).Length);
         return $"{NormalizePrefix(prefix)}_{row.ToString($"D{rowDigits}", CultureInfo.InvariantCulture)}_{column.ToString($"D{columnDigits}", CultureInfo.InvariantCulture)}{NormalizeExtension(extension)}";
+    }
+
+    public static string MultiFileName(
+        string prefix,
+        int index,
+        int count,
+        MatrixSpec? matrix,
+        IReadOnlyList<MatrixCell>? cells,
+        string extension)
+    {
+        if (matrix is { } spec && cells is not null && index >= 0 && index < cells.Count)
+        {
+            var cell = cells[index];
+            return MatrixFileName(prefix, cell.Row, cell.Column, spec.Rows, spec.Columns, extension);
+        }
+
+        return FreeFileName(prefix, index + 1, count, extension);
     }
 
     private static string NormalizeExtension(string extension)

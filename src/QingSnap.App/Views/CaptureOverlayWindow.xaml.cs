@@ -19,6 +19,7 @@ using WpfTextBox = System.Windows.Controls.TextBox;
 using WpfButton = System.Windows.Controls.Button;
 using WpfToggleButton = System.Windows.Controls.Primitives.ToggleButton;
 using MediaColor = System.Windows.Media.Color;
+using SelectionMode = QingSnap.App.Models.SelectionMode;
 using WpfCursors = System.Windows.Input.Cursors;
 using WpfRect = System.Windows.Rect;
 
@@ -81,6 +82,13 @@ public partial class CaptureOverlayWindow : Window
     private int _activeSelectionIndex = -1;
     private bool _dragCreatedSelection;
     private int? _selectionPaddingOverride;
+    private SelectionMode _selectionMode = SelectionMode.Free;
+    private MatrixState? _matrix;
+    private MatrixState? _matrixAtDragStart;
+    private MatrixCell? _matrixDragCell;
+    private bool _matrixDragMoved;
+    private bool _updatingMatrixFields;
+    private readonly List<MatrixCell> _matrixCellOrder = [];
 
     private SelectionItem? ActiveSelection =>
         _activeSelectionIndex >= 0 && _activeSelectionIndex < _selections.Count
@@ -91,9 +99,47 @@ public partial class CaptureOverlayWindow : Window
     {
         public WpfRect Rect { get; set; }
         public DrawingRectangle Pixels { get; set; }
+        public string? Label { get; set; }
         public Border Frame { get; init; } = null!;
         public Border Badge { get; init; } = null!;
         public TextBlock BadgeText { get; init; } = null!;
+    }
+
+    private sealed class MatrixState
+    {
+        public DrawingRectangle Bounds { get; set; }
+        public int Rows { get; set; } = MatrixLayout.DefaultRows;
+        public int Columns { get; set; } = MatrixLayout.DefaultColumns;
+        public int GapX { get; set; } = MatrixLayout.DefaultGap;
+        public int GapY { get; set; } = MatrixLayout.DefaultGap;
+        public HashSet<MatrixCell> Excluded { get; } = [];
+
+        public MatrixState Clone()
+        {
+            var clone = new MatrixState
+            {
+                Bounds = Bounds,
+                Rows = Rows,
+                Columns = Columns,
+                GapX = GapX,
+                GapY = GapY
+            };
+            clone.Excluded.UnionWith(Excluded);
+            return clone;
+        }
+
+        public IReadOnlyList<MatrixCell> ExcludedCells => Excluded
+            .OrderBy(cell => cell.Row)
+            .ThenBy(cell => cell.Column)
+            .ToArray();
+
+        public MatrixSpec ToSpec(CaptureRegion bounds) => new(
+            bounds,
+            Rows,
+            Columns,
+            GapX,
+            GapY,
+            ExcludedCells);
     }
 
     public CaptureOverlayWindow(
@@ -134,6 +180,7 @@ public partial class CaptureOverlayWindow : Window
             InvalidateOcrPrefetch();
         };
         UpdateStyleButtons();
+        UpdateSelectionModeUi();
         _adjustmentBadgeTimer.Tick += (_, _) =>
         {
             _adjustmentBadgeTimer.Stop();
@@ -287,7 +334,9 @@ public partial class CaptureOverlayWindow : Window
         var captureHit = HitTest(point);
         var isCaptureResizeHandle = captureHit is not (
             DragMode.None or DragMode.Create or DragMode.Move);
-        var annotationAvailable = _showActionToolbar && _selections.Count == 1;
+        var annotationAvailable = _showActionToolbar &&
+                                  _selectionMode == SelectionMode.Free &&
+                                  _selections.Count == 1;
         if (annotationAvailable &&
             _annotationController.ActiveTool != CaptureAnnotationTool.None &&
             _selection.Contains(point) &&
@@ -318,7 +367,20 @@ public partial class CaptureOverlayWindow : Window
 
         if (e.ClickCount >= 2 && FindSelectionAt(point) >= 0)
         {
+            if (_selectionMode == SelectionMode.Matrix)
+            {
+                e.Handled = true;
+                return;
+            }
+
             ConfirmSelection();
+            e.Handled = true;
+            return;
+        }
+
+        if (_selectionMode == SelectionMode.Matrix)
+        {
+            BeginMatrixDrag(point);
             e.Handled = true;
             return;
         }
@@ -388,6 +450,27 @@ public partial class CaptureOverlayWindow : Window
     {
         var pointer = ClampPoint(e.GetPosition(Surface));
         UpdateMagnifier(pointer);
+        if (_selectionMode == SelectionMode.Matrix)
+        {
+            if (CaptureToolbar.IsMouseOver || MatrixPanel.IsMouseOver)
+            {
+                ClearSmartPreview();
+                Surface.Cursor = WpfCursors.Arrow;
+                return;
+            }
+
+            if (_dragMode != DragMode.None)
+            {
+                ApplyMatrixDrag(pointer);
+                e.Handled = true;
+                return;
+            }
+
+            ClearSmartPreview();
+            Surface.Cursor = _matrix is null ? WpfCursors.Cross : CursorFor(HitTest(pointer));
+            return;
+        }
+
         if (_dragMode == DragMode.None &&
             !CaptureToolbar.IsMouseOver &&
             !QuickTagPopup.IsOpen &&
@@ -447,6 +530,13 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        if (_selectionMode == SelectionMode.Matrix &&
+            HandleMatrixMouseUp(e, ClampPoint(e.GetPosition(Surface))))
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (_isAnnotating)
         {
             _annotationController.End(ClampPoint(e.GetPosition(Surface)));
@@ -524,6 +614,34 @@ public partial class CaptureOverlayWindow : Window
 
         var key = ResolveShortcutKey(e);
         var modifiers = Keyboard.Modifiers;
+        if (_showActionToolbar && key == Key.M && modifiers == ModifierKeys.None)
+        {
+            SetSelectionMode(_selectionMode == SelectionMode.Free
+                ? SelectionMode.Matrix
+                : SelectionMode.Free);
+            e.Handled = true;
+            return;
+        }
+
+        if (_showActionToolbar &&
+            _selectionMode == SelectionMode.Matrix &&
+            _matrix is not null &&
+            key is Key.Left or Key.Right or Key.Up or Key.Down &&
+            modifiers is ModifierKeys.None or ModifierKeys.Shift)
+        {
+            var (offsetX, offsetY) = key switch
+            {
+                Key.Left => (-1, 0),
+                Key.Right => (1, 0),
+                Key.Up => (0, -1),
+                _ => (0, 1)
+            };
+            var pixelDistance = modifiers == ModifierKeys.Shift ? 10 : 1;
+            NudgeMatrix(offsetX * pixelDistance, offsetY * pixelDistance);
+            e.Handled = true;
+            return;
+        }
+
         if (_showActionToolbar &&
             _selections.Count > 1 &&
             key is Key.Left or Key.Right or Key.Up or Key.Down &&
@@ -567,6 +685,16 @@ public partial class CaptureOverlayWindow : Window
                     Surface.ActualHeight,
                     _snapshot.Bounds.Height);
                 _annotationController.NudgeSelection(deltaX, deltaY);
+                e.Handled = true;
+                return;
+            }
+
+            if (_showActionToolbar &&
+                _selectionMode == SelectionMode.Matrix &&
+                _matrix is not null)
+            {
+                var pixelDistance = modifiers == ModifierKeys.Shift ? 10 : 1;
+                NudgeMatrix(offset.X * pixelDistance, offset.Y * pixelDistance);
                 e.Handled = true;
                 return;
             }
@@ -676,12 +804,23 @@ public partial class CaptureOverlayWindow : Window
         }
 
         if (_showActionToolbar &&
+            _selectionMode == SelectionMode.Free &&
             _selections.Count > 1 &&
             GeometryEditor.Visibility != Visibility.Visible &&
             key == Key.Tab)
         {
             CycleActiveSelection(
                 Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -1 : 1);
+            e.Handled = true;
+            return;
+        }
+
+        if (_showActionToolbar &&
+            _selectionMode == SelectionMode.Matrix &&
+            key is Key.Delete or Key.Back)
+        {
+            ClearMatrix();
+            ShowFullShade();
             e.Handled = true;
             return;
         }
@@ -862,6 +1001,22 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
+        if (_selectionMode == SelectionMode.Matrix)
+        {
+            if (_matrix is not null &&
+                _selection.Contains(ClampPoint(e.GetPosition(Surface))))
+            {
+                ShowMatrixContextMenu();
+            }
+            else
+            {
+                CancelSelection();
+            }
+
+            e.Handled = true;
+            return;
+        }
+
         var selectionPoint = ClampPoint(e.GetPosition(Surface));
         var selectionIndex = FindSelectionAt(selectionPoint);
         if (selectionIndex >= 0)
@@ -945,8 +1100,49 @@ public partial class CaptureOverlayWindow : Window
             _selectionPaddingOverride = Math.Clamp(set.Padding, 0, 200);
         }
 
+        _selectionMode = SelectionMode.Free;
+        _matrix = null;
+        _matrixAtDragStart = null;
+        _matrixDragCell = null;
+        MatrixLayer.Children.Clear();
+        MatrixPanel.Visibility = Visibility.Collapsed;
         ClearSelections();
         _annotationController.Reset();
+
+        if (set.Mode == SelectionMode.Matrix && set.Matrix is { IsValid: true } spec)
+        {
+            var matrixBounds = ClipToScreen(spec.Bounds.ToRectangle());
+            if (matrixBounds.Width > 1 && matrixBounds.Height > 1)
+            {
+                _selectionMode = SelectionMode.Matrix;
+                _matrix = new MatrixState
+                {
+                    Bounds = matrixBounds,
+                    Rows = spec.Rows,
+                    Columns = spec.Columns,
+                    GapX = spec.GapX,
+                    GapY = spec.GapY
+                };
+                if (spec.ExcludedCells is { Count: > 0 } excluded)
+                {
+                    _matrix.Excluded.UnionWith(excluded.Where(cell =>
+                        cell.Row >= 1 && cell.Column >= 1 &&
+                        cell.Row <= spec.Rows && cell.Column <= spec.Columns));
+                }
+
+                NormalizeMatrix();
+                if (_matrix is not null)
+                {
+                    RebuildMatrixCells();
+                    WriteMatrixFields();
+                    UpdateSelectionModeUi();
+                    UpdateMultiSelectionUi();
+                    HintBadge.Visibility = Visibility.Collapsed;
+                    return;
+                }
+            }
+        }
+
         foreach (var region in set.Regions.Where(region => region.IsValid))
         {
             var clipped = ClipToScreen(region.ToRectangle());
@@ -958,6 +1154,7 @@ public partial class CaptureOverlayWindow : Window
             _selections.Add(CreateSelectionItem(PixelsToDip(clipped), clipped));
         }
 
+        UpdateSelectionModeUi();
         if (_selections.Count == 0)
         {
             ShowFullShade();
@@ -1126,26 +1323,28 @@ public partial class CaptureOverlayWindow : Window
         SetSelection(new WpfRect(left, top, right - left, bottom - top));
     }
 
-    private DragMode HitTest(Point point)
+    private DragMode HitTest(Point point) => HitTestRect(_selection, point);
+
+    private DragMode HitTestRect(WpfRect rect, Point point)
     {
-        if (_selection.IsEmpty)
+        if (rect.IsEmpty)
         {
             return DragMode.Create;
         }
 
         if (_lockedSelectionSize is not null)
         {
-            var moveBounds = _selection;
+            var moveBounds = rect;
             moveBounds.Inflate(HitPadding, HitPadding);
             return moveBounds.Contains(point) ? DragMode.Move : DragMode.None;
         }
 
-        var nearLeft = Math.Abs(point.X - _selection.Left) <= HitPadding;
-        var nearRight = Math.Abs(point.X - _selection.Right) <= HitPadding;
-        var nearTop = Math.Abs(point.Y - _selection.Top) <= HitPadding;
-        var nearBottom = Math.Abs(point.Y - _selection.Bottom) <= HitPadding;
-        var withinX = point.X >= _selection.Left - HitPadding && point.X <= _selection.Right + HitPadding;
-        var withinY = point.Y >= _selection.Top - HitPadding && point.Y <= _selection.Bottom + HitPadding;
+        var nearLeft = Math.Abs(point.X - rect.Left) <= HitPadding;
+        var nearRight = Math.Abs(point.X - rect.Right) <= HitPadding;
+        var nearTop = Math.Abs(point.Y - rect.Top) <= HitPadding;
+        var nearBottom = Math.Abs(point.Y - rect.Bottom) <= HitPadding;
+        var withinX = point.X >= rect.Left - HitPadding && point.X <= rect.Right + HitPadding;
+        var withinY = point.Y >= rect.Top - HitPadding && point.Y <= rect.Bottom + HitPadding;
 
         if (nearLeft && nearTop)
         {
@@ -1187,7 +1386,7 @@ public partial class CaptureOverlayWindow : Window
             return DragMode.Bottom;
         }
 
-        return _selection.Contains(point) ? DragMode.Move : DragMode.Create;
+        return rect.Contains(point) ? DragMode.Move : DragMode.Create;
     }
 
     private void SetSelection(WpfRect rect) => SetSelectionCore(rect, ToPhysicalRectangle(rect));
@@ -1238,7 +1437,7 @@ public partial class CaptureOverlayWindow : Window
         _selection = rect;
         _selectionPixelRegion = pixelRegion;
 
-        var single = _selections.Count == 1;
+        var single = _selectionMode == SelectionMode.Free && _selections.Count == 1;
         _annotationController.SetBounds(
             single ? rect : WpfRect.Empty,
             Surface.ActualWidth,
@@ -1371,9 +1570,874 @@ public partial class CaptureOverlayWindow : Window
         }
 
         _selections.Clear();
+        _matrixCellOrder.Clear();
         _activeSelectionIndex = -1;
         _selection = WpfRect.Empty;
         _selectionPixelRegion = null;
+    }
+
+    private void OnFreeModeClick(object sender, RoutedEventArgs e) =>
+        SetSelectionMode(SelectionMode.Free);
+
+    private void OnMatrixModeClick(object sender, RoutedEventArgs e) =>
+        SetSelectionMode(SelectionMode.Matrix);
+
+    private void SetSelectionMode(SelectionMode mode)
+    {
+        if (_selectionMode == mode)
+        {
+            return;
+        }
+
+        if (_dragMode != DragMode.None)
+        {
+            CancelActiveDrag();
+        }
+
+        if (mode == SelectionMode.Matrix)
+        {
+            EnterMatrixMode();
+        }
+        else
+        {
+            ExplodeMatrixToFree();
+        }
+
+        UpdateSelectionModeUi();
+        UpdateMultiSelectionUi();
+    }
+
+    private void EnterMatrixMode()
+    {
+        var baseBounds = GetSelectionUnionPixels();
+        var hadMultiple = _selections.Count > 1;
+        _selectionMode = SelectionMode.Matrix;
+        _matrix = null;
+        _matrixAtDragStart = null;
+        _matrixDragCell = null;
+        MatrixLayer.Children.Clear();
+        QuickTagPopup.IsOpen = false;
+        SelectionListPopup.IsOpen = false;
+        ClearSmartPreview();
+        CancelQrCodeRecognition(clearResults: true);
+        SetAnnotationTool(CaptureAnnotationTool.None);
+        _annotationController.SetBounds(WpfRect.Empty, Surface.ActualWidth, Surface.ActualHeight);
+        ClearSelections();
+
+        if (baseBounds is not { Width: > 1, Height: > 1 } bounds)
+        {
+            MatrixPanel.Visibility = Visibility.Collapsed;
+            ShowAdjustmentBadge(Mouse.GetPosition(Root), "矩阵模式：在画面上拖拽定义基准矩形");
+            return;
+        }
+
+        _matrix = new MatrixState { Bounds = ClipToScreen(bounds) };
+        NormalizeMatrix();
+        RebuildMatrixCells();
+        WriteMatrixFields();
+        ShowAdjustmentBadge(
+            Mouse.GetPosition(Root),
+            hadMultiple
+                ? $"矩阵模式：已用 {_selections.Count} 个选区的外框作为基准"
+                : "矩阵模式：拖动基准框移动，拖边角缩放；右键单元格排除/恢复");
+    }
+
+    private void ExplodeMatrixToFree()
+    {
+        _selectionMode = SelectionMode.Free;
+        _matrix = null;
+        _matrixAtDragStart = null;
+        _matrixDragCell = null;
+        MatrixLayer.Children.Clear();
+        MatrixPanel.Visibility = Visibility.Collapsed;
+        foreach (var item in _selections)
+        {
+            item.Label = null;
+        }
+
+        _matrixCellOrder.Clear();
+        if (_selections.Count == 0)
+        {
+            _annotationController.SetBounds(WpfRect.Empty, Surface.ActualWidth, Surface.ActualHeight);
+            return;
+        }
+
+        _activeSelectionIndex = 0;
+        var first = _selections[0];
+        _selection = first.Rect;
+        _selectionPixelRegion = first.Pixels;
+        SetSelectionCore(first.Rect, first.Pixels);
+        ShowAdjustmentBadge(Mouse.GetPosition(Root), $"已切换为自由模式：{_selections.Count} 个选区");
+    }
+
+    private DrawingRectangle? GetSelectionUnionPixels()
+    {
+        var valid = _selections
+            .Select(item => item.Pixels)
+            .Where(pixels => pixels.Width > 0 && pixels.Height > 0)
+            .ToArray();
+        if (valid.Length == 0)
+        {
+            return null;
+        }
+
+        var left = valid.Min(region => region.Left);
+        var top = valid.Min(region => region.Top);
+        var right = valid.Max(region => region.Right);
+        var bottom = valid.Max(region => region.Bottom);
+        return new DrawingRectangle(left, top, right - left, bottom - top);
+    }
+
+    private void ClearMatrix()
+    {
+        _matrix = null;
+        _matrixAtDragStart = null;
+        _matrixDragCell = null;
+        MatrixLayer.Children.Clear();
+        MatrixPanel.Visibility = Visibility.Collapsed;
+        ClearSelections();
+        _annotationController.SetBounds(WpfRect.Empty, Surface.ActualWidth, Surface.ActualHeight);
+    }
+
+    private void NormalizeMatrix()
+    {
+        if (_matrix is null)
+        {
+            return;
+        }
+
+        _matrix.Bounds = ClipToScreen(_matrix.Bounds);
+        if (_matrix.Bounds.Width <= 0 || _matrix.Bounds.Height <= 0)
+        {
+            return;
+        }
+
+        var parameters = MatrixLayout.Normalize(
+            CaptureRegion.FromRectangle(_matrix.Bounds),
+            _matrix.Rows,
+            _matrix.Columns,
+            _matrix.GapX,
+            _matrix.GapY);
+        _matrix.Rows = parameters.Rows;
+        _matrix.Columns = parameters.Columns;
+        _matrix.GapX = parameters.GapX;
+        _matrix.GapY = parameters.GapY;
+        _matrix.Excluded.RemoveWhere(cell =>
+            cell.Row < 1 || cell.Column < 1 ||
+            cell.Row > _matrix.Rows || cell.Column > _matrix.Columns);
+    }
+
+    private void RebuildMatrixCells()
+    {
+        if (_matrix is null)
+        {
+            ClearSelections();
+            MatrixLayer.Children.Clear();
+            return;
+        }
+
+        var cells = MatrixLayout.CalculateCells(
+            CaptureRegion.FromRectangle(_matrix.Bounds),
+            _matrix.Rows,
+            _matrix.Columns,
+            _matrix.GapX,
+            _matrix.GapY,
+            _matrix.ExcludedCells);
+        foreach (var item in _selections)
+        {
+            SelectionLayer.Children.Remove(item.Frame);
+            SelectionLayer.Children.Remove(item.Badge);
+        }
+
+        _selections.Clear();
+        _matrixCellOrder.Clear();
+        foreach (var entry in cells)
+        {
+            var rect = PixelsToDip(entry.Region.ToRectangle());
+            var item = CreateSelectionItem(rect, entry.Region.ToRectangle());
+            item.Label = $"{entry.Cell.Row},{entry.Cell.Column}";
+            _selections.Add(item);
+            _matrixCellOrder.Add(entry.Cell);
+        }
+
+        _activeSelectionIndex = -1;
+        UpdateMatrixUi();
+    }
+
+    private void UpdateMatrixUi()
+    {
+        if (_matrix is null)
+        {
+            return;
+        }
+
+        _selection = PixelsToDip(_matrix.Bounds);
+        _selectionPixelRegion = _matrix.Bounds;
+        _annotationController.SetBounds(WpfRect.Empty, Surface.ActualWidth, Surface.ActualHeight);
+        SelectionBorder.Visibility = Visibility.Visible;
+        SetPosition(SelectionBorder, _selection.Left, _selection.Top);
+        SelectionBorder.Width = Math.Max(0, _selection.Width);
+        SelectionBorder.Height = Math.Max(0, _selection.Height);
+        HintBadge.Visibility = Visibility.Collapsed;
+        UpdateSelectionVisuals();
+        UpdateCornerMarks(_selection);
+        UpdateMatrixSizeBadge();
+        UpdateToolbarPosition(_selection);
+        UpdateMatrixPanelPosition();
+        UpdateMultiSelectionUi();
+        CancelOcrPrefetch();
+    }
+
+    private void UpdateMatrixLayer()
+    {
+        MatrixLayer.Children.Clear();
+        if (_selectionMode != SelectionMode.Matrix || _matrix is null || _selection.IsEmpty)
+        {
+            return;
+        }
+
+        var bounds = _selection;
+        var allCells = MatrixLayout.CalculateCells(
+            CaptureRegion.FromRectangle(_matrix.Bounds),
+            _matrix.Rows,
+            _matrix.Columns,
+            _matrix.GapX,
+            _matrix.GapY);
+        var accent = new SolidColorBrush(MediaColor.FromArgb(0x88, 0x76, 0xDF, 0xEE));
+        var rowsLabelBounds = bounds.Left >= 18;
+        var columnsLabelBounds = bounds.Top >= 18;
+        var labelFont = FindResource("DataFont") as System.Windows.Media.FontFamily
+                        ?? new System.Windows.Media.FontFamily("Consolas");
+        foreach (var entry in allCells)
+        {
+            var rect = PixelsToDip(entry.Region.ToRectangle());
+            if (_matrix.Excluded.Contains(entry.Cell))
+            {
+                var overlay = new Rectangle
+                {
+                    Width = Math.Max(0, rect.Width),
+                    Height = Math.Max(0, rect.Height),
+                    Fill = new SolidColorBrush(MediaColor.FromArgb(0xD8, 0x0B, 0x11, 0x18)),
+                    Stroke = new SolidColorBrush(MediaColor.FromArgb(0x99, 0xFF, 0x71, 0x80)),
+                    StrokeThickness = 1,
+                    StrokeDashArray = new DoubleCollection([3, 2]),
+                    IsHitTestVisible = false
+                };
+                SetPosition(overlay, rect.Left, rect.Top);
+                MatrixLayer.Children.Add(overlay);
+                if (rect.Width >= 18 && rect.Height >= 18)
+                {
+                    var cross = new TextBlock
+                    {
+                        Text = "×",
+                        FontFamily = labelFont,
+                        FontSize = 14,
+                        Foreground = new SolidColorBrush(MediaColor.FromArgb(0xCC, 0xFF, 0x71, 0x80)),
+                        IsHitTestVisible = false
+                    };
+                    SetPosition(cross, rect.Left + (rect.Width / 2) - 5, rect.Top + (rect.Height / 2) - 10);
+                    MatrixLayer.Children.Add(cross);
+                }
+            }
+
+            if (rowsLabelBounds && entry.Cell.Column == 1 && rect.Height >= 16)
+            {
+                var label = new TextBlock
+                {
+                    Text = entry.Cell.Row.ToString(),
+                    FontFamily = labelFont,
+                    FontSize = 10,
+                    Foreground = accent,
+                    IsHitTestVisible = false
+                };
+                SetPosition(label, bounds.Left - 16, rect.Top + 2);
+                MatrixLayer.Children.Add(label);
+            }
+
+            if (columnsLabelBounds && entry.Cell.Row == 1 && rect.Width >= 16)
+            {
+                var label = new TextBlock
+                {
+                    Text = entry.Cell.Column.ToString(),
+                    FontFamily = labelFont,
+                    FontSize = 10,
+                    Foreground = accent,
+                    IsHitTestVisible = false
+                };
+                SetPosition(label, rect.Left + 2, bounds.Top - 16);
+                MatrixLayer.Children.Add(label);
+            }
+        }
+
+        var frame = new Rectangle
+        {
+            Width = Math.Max(0, bounds.Width),
+            Height = Math.Max(0, bounds.Height),
+            Stroke = accent,
+            StrokeThickness = 1,
+            StrokeDashArray = new DoubleCollection([4, 3]),
+            Fill = System.Windows.Media.Brushes.Transparent,
+            IsHitTestVisible = false
+        };
+        SetPosition(frame, bounds.Left, bounds.Top);
+        MatrixLayer.Children.Add(frame);
+    }
+
+    private void UpdateMatrixSizeBadge()
+    {
+        if (_matrix is null)
+        {
+            SizeBadge.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var total = _matrix.Rows * _matrix.Columns;
+        var included = _selections.Count;
+        var firstCell = _selections.FirstOrDefault()?.Pixels;
+        var cellText = firstCell is { Width: > 0, Height: > 0 } cell
+            ? $"{cell.Width} × {cell.Height} px"
+            : "—";
+        SizeText.Text = $"矩阵 {_matrix.Rows}×{_matrix.Columns} · {included}/{total} 格";
+        ToolbarSizeText.Text = $"矩阵 {_matrix.Rows}×{_matrix.Columns} · 单元格 {cellText}";
+        MatrixSummaryText.Text = $"{_matrix.Rows} × {_matrix.Columns} · {included}/{total}";
+        PositionSizeBadge(_selection);
+    }
+
+    private void PositionSizeBadge(WpfRect rect)
+    {
+        SizeBadge.Visibility = Visibility.Visible;
+        SizeBadge.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
+        var badgeWidth = SizeBadge.DesiredSize.Width;
+        var badgeHeight = SizeBadge.DesiredSize.Height;
+        var left = Math.Min(rect.Right - badgeWidth, Surface.ActualWidth - badgeWidth - 8);
+        left = Math.Max(8, left);
+        var top = rect.Bottom + 9;
+        if (top + badgeHeight > Surface.ActualHeight - 8)
+        {
+            top = Math.Max(8, rect.Bottom - badgeHeight - 9);
+        }
+
+        SetPosition(SizeBadge, left, top);
+    }
+
+    private void UpdateMatrixPanelPosition()
+    {
+        var visible = _showActionToolbar &&
+                      _selectionMode == SelectionMode.Matrix &&
+                      _matrix is not null &&
+                      !_selection.IsEmpty;
+        MatrixPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (!visible)
+        {
+            return;
+        }
+
+        MatrixPanel.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
+        var width = MatrixPanel.DesiredSize.Width;
+        var height = MatrixPanel.DesiredSize.Height;
+        var left = Math.Clamp(
+            _selection.Left,
+            10,
+            Math.Max(10, Surface.ActualWidth - width - 10));
+        var toolbarTop = Canvas.GetTop(CaptureToolbar);
+        var toolbarHeight = CaptureToolbar.ActualHeight > 0
+            ? CaptureToolbar.ActualHeight
+            : CaptureToolbar.DesiredSize.Height;
+        var top = double.IsFinite(toolbarTop)
+            ? toolbarTop + toolbarHeight + 6
+            : _selection.Bottom + 10;
+        if (top + height > Surface.ActualHeight - 10)
+        {
+            top = _selection.Top - height - 10;
+        }
+
+        if (top < 10)
+        {
+            top = _selection.Bottom + 10;
+        }
+
+        top = Math.Clamp(top, 10, Math.Max(10, Surface.ActualHeight - height - 10));
+        SetPosition(MatrixPanel, left, top);
+    }
+
+    private void UpdateSelectionModeUi()
+    {
+        var free = _selectionMode == SelectionMode.Free;
+        ApplyModeButton(FreeModeButton, free);
+        ApplyModeButton(MatrixModeButton, !free);
+        SavePresetButton.ToolTip = free
+            ? "保存当前选区为命名选区"
+            : "保存当前矩阵选区为命名选区";
+    }
+
+    private static void ApplyModeButton(WpfButton button, bool active)
+    {
+        button.Background = active
+            ? new SolidColorBrush(MediaColor.FromRgb(29, 58, 68))
+            : System.Windows.Media.Brushes.Transparent;
+        button.Foreground = new SolidColorBrush(active
+            ? MediaColor.FromRgb(118, 223, 238)
+            : MediaColor.FromRgb(184, 200, 208));
+    }
+
+    private void BeginMatrixDrag(Point point)
+    {
+        _dragStart = point;
+        _selectionAtDragStart = _selection;
+        _selectionPixelAtDragStart = GetLocalRegion();
+        _dragMoved = false;
+        _pendingSmartSelection = WpfRect.Empty;
+        _dragCreatedSelection = false;
+        _matrixDragMoved = false;
+        _matrixDragCell = null;
+        _matrixAtDragStart = null;
+
+        if (_matrix is null)
+        {
+            BeginNewSelection(new WpfRect(point, point));
+            _dragCreatedSelection = true;
+            _dragMode = DragMode.Create;
+            Surface.CaptureMouse();
+            return;
+        }
+
+        var hit = HitTestRect(_selection, point);
+        if (hit == DragMode.Create)
+        {
+            ClearMatrix();
+            BeginNewSelection(new WpfRect(point, point));
+            _dragCreatedSelection = true;
+            _dragMode = DragMode.Create;
+            Surface.CaptureMouse();
+            return;
+        }
+
+        _matrixAtDragStart = _matrix.Clone();
+        _matrixDragCell = FindMatrixCellAt(point);
+        _dragMode = hit;
+        Surface.CaptureMouse();
+    }
+
+    private bool HandleMatrixMouseUp(MouseButtonEventArgs e, Point point)
+    {
+        if (_dragMode == DragMode.None)
+        {
+            return false;
+        }
+
+        if (_matrix is null)
+        {
+            ApplyDrag(point);
+            _dragMode = DragMode.None;
+            _dragCreatedSelection = false;
+            _selectionPixelAtDragStart = null;
+            Surface.ReleaseMouseCapture();
+            if (ActiveSelection is not { } created ||
+                created.Rect.Width < MinimumSelectionSize ||
+                created.Rect.Height < MinimumSelectionSize)
+            {
+                ShowFullShade();
+                return true;
+            }
+
+            AdoptActiveSelectionAsMatrix();
+            return true;
+        }
+
+        ApplyMatrixDrag(point);
+        var toggleCell = !_matrixDragMoved && e.ClickCount == 1
+            ? _matrixDragCell
+            : null;
+        _dragMode = DragMode.None;
+        _dragCreatedSelection = false;
+        _selectionPixelAtDragStart = null;
+        _matrixAtDragStart = null;
+        _matrixDragCell = null;
+        _matrixDragMoved = false;
+        Surface.ReleaseMouseCapture();
+        if (toggleCell is { } cell)
+        {
+            ToggleMatrixCell(cell);
+        }
+        else
+        {
+            UpdateMatrixUi();
+        }
+
+        Surface.Cursor = CursorFor(HitTest(point));
+        return true;
+    }
+
+    private void ApplyMatrixDrag(Point point)
+    {
+        if (_matrix is null)
+        {
+            return;
+        }
+
+        var start = _matrixAtDragStart ?? _matrix;
+        if (_dragMode == DragMode.Move)
+        {
+            var physicalStart = ToPhysicalPoint(_dragStart);
+            var physicalCurrent = ToPhysicalPoint(point);
+            var deltaX = physicalCurrent.X - physicalStart.X;
+            var deltaY = physicalCurrent.Y - physicalStart.Y;
+            if (deltaX == 0 && deltaY == 0)
+            {
+                return;
+            }
+
+            _matrixDragMoved = true;
+            SetMatrixBounds(CaptureFixedSizeConstraint.Move(
+                start.Bounds,
+                deltaX,
+                deltaY,
+                CapturePixelBounds));
+            return;
+        }
+
+        _matrixDragMoved = true;
+        SetMatrixBounds(ResizeMatrixBounds(start.Bounds, ToPhysicalPoint(point)));
+    }
+
+    private DrawingRectangle ResizeMatrixBounds(
+        DrawingRectangle start,
+        System.Drawing.Point cursor)
+    {
+        var left = start.Left;
+        var top = start.Top;
+        var right = start.Right;
+        var bottom = start.Bottom;
+        if (_dragMode is DragMode.Left or DragMode.TopLeft or DragMode.BottomLeft)
+        {
+            left = Math.Clamp(cursor.X, 0, right - (int)MinimumSelectionSize);
+        }
+
+        if (_dragMode is DragMode.Right or DragMode.TopRight or DragMode.BottomRight)
+        {
+            right = Math.Clamp(cursor.X, left + (int)MinimumSelectionSize, CapturePixelBounds.Width);
+        }
+
+        if (_dragMode is DragMode.Top or DragMode.TopLeft or DragMode.TopRight)
+        {
+            top = Math.Clamp(cursor.Y, 0, bottom - (int)MinimumSelectionSize);
+        }
+
+        if (_dragMode is DragMode.Bottom or DragMode.BottomLeft or DragMode.BottomRight)
+        {
+            bottom = Math.Clamp(cursor.Y, top + (int)MinimumSelectionSize, CapturePixelBounds.Height);
+        }
+
+        return new DrawingRectangle(left, top, right - left, bottom - top);
+    }
+
+    private void SetMatrixBounds(DrawingRectangle bounds)
+    {
+        if (_matrix is null)
+        {
+            return;
+        }
+
+        var clipped = ClipToScreen(bounds);
+        if (clipped.Width <= 0 || clipped.Height <= 0)
+        {
+            return;
+        }
+
+        _matrix.Bounds = clipped;
+        NormalizeMatrix();
+        RebuildMatrixCells();
+        WriteMatrixFields();
+    }
+
+    private void AdoptActiveSelectionAsMatrix()
+    {
+        if (ActiveSelection is not { } created)
+        {
+            return;
+        }
+
+        var bounds = created.Pixels;
+        ClearSelections();
+        _matrix = new MatrixState { Bounds = ClipToScreen(bounds) };
+        NormalizeMatrix();
+        RebuildMatrixCells();
+        WriteMatrixFields();
+        UpdateSelectionModeUi();
+        ShowAdjustmentBadge(
+            Mouse.GetPosition(Root),
+            $"矩阵基准 {_matrix.Bounds.Width} × {_matrix.Bounds.Height} px · 可拖动或调整行列");
+    }
+
+    private MatrixCell? FindMatrixCellAt(Point point)
+    {
+        if (_matrix is null)
+        {
+            return null;
+        }
+
+        foreach (var entry in MatrixLayout.CalculateCells(
+                     CaptureRegion.FromRectangle(_matrix.Bounds),
+                     _matrix.Rows,
+                     _matrix.Columns,
+                     _matrix.GapX,
+                     _matrix.GapY))
+        {
+            var rect = PixelsToDip(entry.Region.ToRectangle());
+            if (rect.Contains(point))
+            {
+                return entry.Cell;
+            }
+        }
+
+        return null;
+    }
+
+    private void ToggleMatrixCell(MatrixCell cell)
+    {
+        if (_matrix is null)
+        {
+            return;
+        }
+
+        if (_matrix.Excluded.Remove(cell))
+        {
+            RebuildMatrixCells();
+            WriteMatrixFields();
+            ShowAdjustmentBadge(
+                Mouse.GetPosition(Root),
+                $"已恢复第 {cell.Row} 行第 {cell.Column} 列");
+            return;
+        }
+
+        if (_matrix.Excluded.Count + 1 >= _matrix.Rows * _matrix.Columns)
+        {
+            ShowAdjustmentBadge(Mouse.GetPosition(Root), "至少需要保留一个单元格");
+            return;
+        }
+
+        _matrix.Excluded.Add(cell);
+        RebuildMatrixCells();
+        WriteMatrixFields();
+        ShowAdjustmentBadge(
+            Mouse.GetPosition(Root),
+            $"已排除第 {cell.Row} 行第 {cell.Column} 列");
+    }
+
+    private void NudgeMatrix(int offsetX, int offsetY)
+    {
+        if (_matrix is null)
+        {
+            return;
+        }
+
+        SetMatrixBounds(CaptureFixedSizeConstraint.Move(
+            _matrix.Bounds,
+            offsetX,
+            offsetY,
+            CapturePixelBounds));
+    }
+
+    private void WriteMatrixFields()
+    {
+        if (_matrix is null)
+        {
+            return;
+        }
+
+        _updatingMatrixFields = true;
+        MatrixRowsBox.Text = _matrix.Rows.ToString();
+        MatrixColumnsBox.Text = _matrix.Columns.ToString();
+        MatrixRowGapBox.Text = _matrix.GapX.ToString();
+        MatrixColumnGapBox.Text = _matrix.GapY.ToString();
+        _updatingMatrixFields = false;
+        SetMatrixFieldState(MatrixRowsBox, MatrixFieldState.Normal);
+        SetMatrixFieldState(MatrixColumnsBox, MatrixFieldState.Normal);
+        SetMatrixFieldState(MatrixRowGapBox, MatrixFieldState.Normal);
+        SetMatrixFieldState(MatrixColumnGapBox, MatrixFieldState.Normal);
+        UpdateMatrixHint();
+    }
+
+    private enum MatrixFieldState
+    {
+        Normal,
+        Warning,
+        Invalid
+    }
+
+    private void SetMatrixFieldState(WpfTextBox box, MatrixFieldState state)
+    {
+        box.BorderBrush = new SolidColorBrush(state switch
+        {
+            MatrixFieldState.Invalid => MediaColor.FromRgb(255, 113, 128),
+            MatrixFieldState.Warning => MediaColor.FromRgb(255, 190, 92),
+            _ => MediaColor.FromRgb(0x53, 0x6A, 0x76)
+        });
+        box.BorderThickness = new Thickness(1);
+    }
+
+    private static bool TryReadMatrixValue(WpfTextBox box, int fallback, out int value, out bool invalid)
+    {
+        var text = box.Text.Trim();
+        if (text.Length == 0)
+        {
+            value = fallback;
+            invalid = false;
+            return true;
+        }
+
+        if (int.TryParse(text, out value))
+        {
+            invalid = false;
+            return true;
+        }
+
+        value = fallback;
+        invalid = true;
+        return false;
+    }
+
+    private void OnMatrixParameterChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_updatingMatrixFields || _matrix is null)
+        {
+            return;
+        }
+
+        TryReadMatrixValue(MatrixRowsBox, _matrix.Rows, out var rows, out var rowsInvalid);
+        TryReadMatrixValue(MatrixColumnsBox, _matrix.Columns, out var columns, out var columnsInvalid);
+        TryReadMatrixValue(MatrixRowGapBox, _matrix.GapY, out var gapY, out var rowGapInvalid);
+        TryReadMatrixValue(MatrixColumnGapBox, _matrix.GapX, out var gapX, out var columnGapInvalid);
+
+        var parameters = MatrixLayout.Normalize(
+            CaptureRegion.FromRectangle(_matrix.Bounds),
+            rows,
+            columns,
+            gapX,
+            gapY);
+        var adjusted = parameters.Rows != rows ||
+                       parameters.Columns != columns ||
+                       parameters.GapX != gapX ||
+                       parameters.GapY != gapY;
+        _matrix.Rows = parameters.Rows;
+        _matrix.Columns = parameters.Columns;
+        _matrix.GapX = parameters.GapX;
+        _matrix.GapY = parameters.GapY;
+        _matrix.Excluded.RemoveWhere(cell =>
+            cell.Row > _matrix.Rows || cell.Column > _matrix.Columns);
+        RebuildMatrixCells();
+
+        SetMatrixFieldState(MatrixRowsBox, rowsInvalid
+            ? MatrixFieldState.Invalid
+            : parameters.Rows != rows ? MatrixFieldState.Warning : MatrixFieldState.Normal);
+        SetMatrixFieldState(MatrixColumnsBox, columnsInvalid
+            ? MatrixFieldState.Invalid
+            : parameters.Columns != columns ? MatrixFieldState.Warning : MatrixFieldState.Normal);
+        SetMatrixFieldState(MatrixRowGapBox, rowGapInvalid
+            ? MatrixFieldState.Invalid
+            : parameters.GapY != gapY ? MatrixFieldState.Warning : MatrixFieldState.Normal);
+        SetMatrixFieldState(MatrixColumnGapBox, columnGapInvalid
+            ? MatrixFieldState.Invalid
+            : parameters.GapX != gapX ? MatrixFieldState.Warning : MatrixFieldState.Normal);
+        UpdateMatrixHint(adjusted);
+    }
+
+    private void UpdateMatrixHint(bool adjusted = false)
+    {
+        if (_matrix is null)
+        {
+            return;
+        }
+
+        var cells = MatrixLayout.Calculate(
+            CaptureRegion.FromRectangle(_matrix.Bounds),
+            _matrix.Rows,
+            _matrix.Columns,
+            _matrix.GapX,
+            _matrix.GapY);
+        var cellSize = cells.Count > 0 ? $"{cells[0].Width} × {cells[0].Height} px" : "放不下";
+        MatrixHintText.Text = adjusted
+            ? $"已按可用空间调整：{_matrix.Rows} 行 × {_matrix.Columns} 列，间隔 {_matrix.GapX} × {_matrix.GapY} px，单元格 {cellSize}"
+            : $"单元格 {cellSize} · 单击单元格可排除或恢复";
+        MatrixHintText.Foreground = new SolidColorBrush(adjusted
+            ? MediaColor.FromRgb(255, 190, 92)
+            : MediaColor.FromRgb(118, 144, 156));
+    }
+
+    private void OnMatrixParameterLostFocus(object sender, RoutedEventArgs e) => WriteMatrixFields();
+
+    private void OnMatrixParameterKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            WriteMatrixFields();
+            Focus();
+            Keyboard.Focus(this);
+            e.Handled = true;
+        }
+    }
+
+    private void OnMatrixParameterWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (sender is not WpfTextBox box || _matrix is null)
+        {
+            return;
+        }
+
+        var step = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? 5 : 1;
+        if (!int.TryParse(box.Text, out var current))
+        {
+            current = box == MatrixRowsBox
+                ? _matrix.Rows
+                : box == MatrixColumnsBox
+                    ? _matrix.Columns
+                    : box == MatrixRowGapBox
+                        ? _matrix.GapY
+                        : _matrix.GapX;
+        }
+
+        var next = Math.Max(0, current + (e.Delta > 0 ? step : -step));
+        box.Text = next.ToString();
+        box.CaretIndex = box.Text.Length;
+        e.Handled = true;
+    }
+
+    private void ShowMatrixContextMenu()
+    {
+        var menu = new ContextMenu
+        {
+            PlacementTarget = Surface,
+            Placement = PlacementMode.MousePoint
+        };
+        if (_matrix is { Excluded.Count: > 0 })
+        {
+            var restore = new MenuItem { Header = $"恢复全部单元格（{_matrix.Excluded.Count} 个）" };
+            restore.Click += (_, _) =>
+            {
+                _matrix?.Excluded.Clear();
+                RebuildMatrixCells();
+                WriteMatrixFields();
+            };
+            menu.Items.Add(restore);
+            menu.Items.Add(new Separator());
+        }
+
+        var redraw = new MenuItem { Header = "重新框选基准矩形" };
+        redraw.Click += (_, _) =>
+        {
+            ClearMatrix();
+            ShowFullShade();
+            ShowAdjustmentBadge(Mouse.GetPosition(Root), "请在画面上拖拽定义新的基准矩形");
+        };
+        var toFree = new MenuItem { Header = "切换为自由选区" };
+        toFree.Click += (_, _) => SetSelectionMode(SelectionMode.Free);
+        var clear = new MenuItem { Header = "清空矩阵" };
+        clear.Click += (_, _) => ShowFullShade();
+        menu.Items.Add(redraw);
+        menu.Items.Add(toFree);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(clear);
+        menu.IsOpen = true;
     }
 
     private void UpdateSelectionVisuals()
@@ -1386,13 +2450,14 @@ public partial class CaptureOverlayWindow : Window
             SetPosition(item.Frame, item.Rect.Left, item.Rect.Top);
             item.Frame.Width = Math.Max(0, item.Rect.Width);
             item.Frame.Height = Math.Max(0, item.Rect.Height);
-            item.BadgeText.Text = (index + 1).ToString();
+            item.BadgeText.Text = item.Label ?? (index + 1).ToString();
             SetPosition(item.Badge, item.Rect.Left + 5, item.Rect.Top + 5);
             item.Badge.Visibility = item.Rect.Width >= 26 && item.Rect.Height >= 20
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
 
+        UpdateMatrixLayer();
         UpdateShadeMask();
     }
 
@@ -1499,6 +2564,22 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
+        if (_selectionMode == SelectionMode.Matrix && _matrixAtDragStart is { } matrixSnapshot)
+        {
+            _matrix = matrixSnapshot;
+            _matrixAtDragStart = null;
+            _matrixDragCell = null;
+            _matrixDragMoved = false;
+            _dragMode = DragMode.None;
+            _dragCreatedSelection = false;
+            _pendingSmartSelection = WpfRect.Empty;
+            _selectionPixelAtDragStart = null;
+            Surface.ReleaseMouseCapture();
+            RebuildMatrixCells();
+            WriteMatrixFields();
+            return;
+        }
+
         if (_dragCreatedSelection)
         {
             RemoveActiveSelection();
@@ -1533,7 +2614,8 @@ public partial class CaptureOverlayWindow : Window
 
     private void UpdateMultiSelectionUi()
     {
-        var multi = _selections.Count > 1;
+        var multi = _selectionMode == SelectionMode.Matrix || _selections.Count > 1;
+        var freeMode = _selectionMode == SelectionMode.Free;
         WpfButton[] annotationButtons =
         [
             PenButton,
@@ -1558,15 +2640,23 @@ public partial class CaptureOverlayWindow : Window
             ? Visibility.Visible
             : Visibility.Collapsed;
         SelectionListButton.IsEnabled = _selections.Count > 0;
-        SelectionListButton.Visibility = _showActionToolbar && _selections.Count > 0
+        SelectionListButton.Visibility = _showActionToolbar && freeMode && _selections.Count > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
 
         if (SelectionListPopup.IsOpen)
         {
-            Dispatcher.BeginInvoke(new Action(RebuildSelectionList));
+            if (freeMode)
+            {
+                Dispatcher.BeginInvoke(new Action(RebuildSelectionList));
+            }
+            else
+            {
+                SelectionListPopup.IsOpen = false;
+            }
         }
 
+        UpdateSelectionModeUi();
         if (multi && _annotationController.ActiveTool != CaptureAnnotationTool.None)
         {
             SetAnnotationTool(CaptureAnnotationTool.None);
@@ -1730,7 +2820,7 @@ public partial class CaptureOverlayWindow : Window
     {
         _annotationController.Reset();
         _annotationController.SetBounds(WpfRect.Empty, Surface.ActualWidth, Surface.ActualHeight);
-        ClearSelections();
+        ClearMatrix();
         _smartPreview = WpfRect.Empty;
         _lockedSelectionSize = null;
         UpdateFixedSizeUi();
@@ -1742,6 +2832,18 @@ public partial class CaptureOverlayWindow : Window
         QuickTagPopup.IsOpen = false;
         SelectionListPopup.IsOpen = false;
         HintBadge.Visibility = Visibility.Visible;
+        if (_selectionMode == SelectionMode.Matrix)
+        {
+            HintActionText.Text = "矩阵模式 · 拖拽定义基准矩形 · M 切换自由模式 · ESC 退出";
+        }
+        else
+        {
+            HintActionText.Text = _showActionToolbar
+                ? UsesCloseButton
+                    ? "拖动框选多个区域 · Tab 切换 · Delete 删除 · ENTER 输出 · ESC / × 关闭"
+                    : "拖动框选多个区域 · Tab 切换 · Delete 删除 · ENTER 输出 · ESC 退出"
+                : "R 循环历史选区  ·  双击 / ENTER 复制  ·  ESC / × 关闭";
+        }
 
         foreach (var mark in _cornerMarks)
         {
@@ -1781,6 +2883,12 @@ public partial class CaptureOverlayWindow : Window
         CaptureRegion? physicalOverride = null,
         bool isPreview = false)
     {
+        if (_selectionMode == SelectionMode.Matrix && !isPreview)
+        {
+            UpdateMatrixSizeBadge();
+            return;
+        }
+
         var physical = physicalOverride
             ?? (_selectionPixelRegion is { } pixels
                 ? CaptureRegion.FromRectangle(pixels)
@@ -1808,20 +2916,7 @@ public partial class CaptureOverlayWindow : Window
                 : constraintLabel is null
                     ? $"{physicalWidth} × {physicalHeight}"
                     : $"{physicalWidth} × {physicalHeight}  ·  {constraintLabel}";
-        SizeBadge.Visibility = Visibility.Visible;
-        SizeBadge.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
-
-        var badgeWidth = SizeBadge.DesiredSize.Width;
-        var badgeHeight = SizeBadge.DesiredSize.Height;
-        var left = Math.Min(rect.Right - badgeWidth, Surface.ActualWidth - badgeWidth - 8);
-        left = Math.Max(8, left);
-        var top = rect.Bottom + 9;
-        if (top + badgeHeight > Surface.ActualHeight - 8)
-        {
-            top = Math.Max(8, rect.Bottom - badgeHeight - 9);
-        }
-
-        SetPosition(SizeBadge, left, top);
+        PositionSizeBadge(rect);
     }
 
     private void UpdateHintPosition()
@@ -1839,6 +2934,7 @@ public partial class CaptureOverlayWindow : Window
             QuickTagButton.Visibility = Visibility.Collapsed;
             SavePresetButton.Visibility = Visibility.Collapsed;
             SelectionListButton.Visibility = Visibility.Collapsed;
+            MatrixPanel.Visibility = Visibility.Collapsed;
             SelectionListPopup.IsOpen = false;
             QuickTagPopup.IsOpen = false;
             return;
@@ -1850,9 +2946,10 @@ public partial class CaptureOverlayWindow : Window
         SavePresetButton.Visibility = _selections.Count > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
-        SelectionListButton.Visibility = _selections.Count > 0
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        SelectionListButton.Visibility =
+            _selections.Count > 0 && _selectionMode == SelectionMode.Free
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         if (!_settings.ShowQuickCaptureTags)
         {
             QuickTagPopup.IsOpen = false;
@@ -1874,6 +2971,7 @@ public partial class CaptureOverlayWindow : Window
 
         top = Math.Clamp(top, 10, Math.Max(10, Surface.ActualHeight - toolbarHeight - 10));
         SetPosition(CaptureToolbar, left, top);
+        UpdateMatrixPanelPosition();
     }
 
     private void ConfirmSelection()
@@ -1903,7 +3001,7 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
-        if (!output.IsSingle &&
+        if ((!output.IsSingle || output.Mode == SelectionMode.Matrix) &&
             (action is CaptureOverlayAction.Ocr or
                 CaptureOverlayAction.QrCode or
                 CaptureOverlayAction.Pin or
@@ -1953,6 +3051,7 @@ public partial class CaptureOverlayWindow : Window
     private void InvalidateOcrPrefetch()
     {
         if (_creatingOcrPrefetch ||
+            _selectionMode != SelectionMode.Free ||
             _selections.Count != 1 ||
             _ocrService?.IsOcrAvailable != true ||
             !_showActionToolbar)
@@ -2095,16 +3194,28 @@ public partial class CaptureOverlayWindow : Window
 
     public CaptureSelectionOutput? CreateSelectionOutput()
     {
-        var regions = _selections
-            .Where(item => item.Pixels.Width > 0 && item.Pixels.Height > 0)
-            .Select(item => CaptureRegion.FromRectangle(item.Pixels))
+        var matrixMode = _selectionMode == SelectionMode.Matrix && _matrix is not null;
+        var valid = _selections
+            .Select((item, index) => (Item: item, Index: index))
+            .Where(entry => entry.Item.Pixels.Width > 0 && entry.Item.Pixels.Height > 0)
+            .ToArray();
+        var regions = valid
+            .Select(entry => CaptureRegion.FromRectangle(entry.Item.Pixels))
             .ToArray();
         if (regions.Length == 0)
         {
             return null;
         }
 
-        if (regions.Length == 1 && _activeSelectionIndex != 0)
+        var cells = matrixMode
+            ? valid.Select(entry => _matrixCellOrder[entry.Index]).ToArray()
+            : null;
+        var matrix = matrixMode && _matrix is not null
+            ? _matrix.ToSpec(CaptureRegion.FromRectangle(_matrix.Bounds))
+            : null;
+        var mode = matrixMode ? SelectionMode.Matrix : SelectionMode.Free;
+
+        if (!matrixMode && regions.Length == 1 && _activeSelectionIndex != 0)
         {
             ActivateSelection(0);
         }
@@ -2112,7 +3223,9 @@ public partial class CaptureOverlayWindow : Window
         var padding = EffectivePadding;
         if (regions.Length == 1)
         {
-            var image = CreateSelectedImage();
+            var image = matrixMode
+                ? SelectionImageComposer.Crop(_snapshot.Image, regions[0])
+                : CreateSelectedImage();
             var box = SelectionImageComposer.GetBoundingBox(regions, padding, CapturePixelBounds);
             var left = box.IsValid ? regions[0].X - box.X : padding;
             var top = box.IsValid ? regions[0].Y - box.Y : padding;
@@ -2133,7 +3246,10 @@ public partial class CaptureOverlayWindow : Window
                 regions,
                 composite,
                 box.IsValid ? box : null,
-                padding);
+                padding,
+                mode,
+                matrix,
+                cells);
         }
 
         var images = regions
@@ -2149,11 +3265,38 @@ public partial class CaptureOverlayWindow : Window
             regions,
             multiComposite,
             multiBox.IsValid ? multiBox : null,
-            padding);
+            padding,
+            mode,
+            matrix,
+            cells);
     }
 
     public SelectionSet? CreateGlobalSelectionSet()
     {
+        if (_selectionMode == SelectionMode.Matrix && _matrix is not null)
+        {
+            var globalBounds = new CaptureRegion(
+                _snapshot.Bounds.X + _matrix.Bounds.X,
+                _snapshot.Bounds.Y + _matrix.Bounds.Y,
+                _matrix.Bounds.Width,
+                _matrix.Bounds.Height);
+            var matrixRegions = _selections
+                .Where(item => item.Pixels.Width > 0 && item.Pixels.Height > 0)
+                .Select(item => new CaptureRegion(
+                    _snapshot.Bounds.X + item.Pixels.X,
+                    _snapshot.Bounds.Y + item.Pixels.Y,
+                    item.Pixels.Width,
+                    item.Pixels.Height))
+                .ToArray();
+            return matrixRegions.Length == 0
+                ? null
+                : new SelectionSet(
+                    SelectionMode.Matrix,
+                    matrixRegions,
+                    _matrix.ToSpec(globalBounds),
+                    EffectivePadding);
+        }
+
         var regions = _selections
             .Where(item => item.Pixels.Width > 0 && item.Pixels.Height > 0)
             .Select(item => new CaptureRegion(
@@ -2165,7 +3308,7 @@ public partial class CaptureOverlayWindow : Window
         return regions.Length == 0
             ? null
             : new SelectionSet(
-                QingSnap.App.Models.SelectionMode.Free,
+                SelectionMode.Free,
                 regions,
                 Padding: EffectivePadding);
     }
@@ -2489,6 +3632,7 @@ public partial class CaptureOverlayWindow : Window
     private void OnPreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
         if (CaptureToolbar.IsMouseOver ||
+            MatrixPanel.IsMouseOver ||
             AnnotationPalettePopup.Child is UIElement { IsMouseOver: true } ||
             RegionToolPopup.Child is UIElement { IsMouseOver: true } ||
             ArrowToolPopup.Child is UIElement { IsMouseOver: true } ||
@@ -2635,6 +3779,7 @@ public partial class CaptureOverlayWindow : Window
     private async void OnQrCodeClick(object sender, RoutedEventArgs e)
     {
         if (_qrCodeService is null || _clipboardService is null ||
+            _selectionMode != SelectionMode.Free ||
             _selections.Count != 1 ||
             GetLocalRegion() is not { } localRegion || _selection.IsEmpty)
         {

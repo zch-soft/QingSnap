@@ -97,6 +97,8 @@ public partial class SettingsWindow : Window
         SelectComboByTag(MultiOutputCombo, settings.MultiRegionOutputMode);
         MultiPaddingBox.Text = settings.MultiRegionPadding.ToString();
         MultiPrefixBox.Text = settings.MultiImageFileNamePrefix;
+        SelectComboByTag(MultiClipboardLayoutCombo, settings.MultiImageClipboardLayout);
+        MultiClipboardFileDropCheck.IsChecked = settings.MultiImageClipboardFileDrop;
         SelectComboByTag(CloseInteractionCombo, settings.CloseInteraction);
         SelectComboByTag(
             OcrModelCombo,
@@ -133,6 +135,8 @@ public partial class SettingsWindow : Window
                 MultiRegionOutputMode = SelectedTag(MultiOutputCombo, "SingleImage"),
                 MultiRegionPadding = ParseInt(MultiPaddingBox, "多选区外扩边距"),
                 MultiImageFileNamePrefix = MultiPrefixBox.Text,
+                MultiImageClipboardLayout = SelectedTag(MultiClipboardLayoutCombo, "Auto"),
+                MultiImageClipboardFileDrop = MultiClipboardFileDropCheck.IsChecked == true,
                 CloseInteraction = SelectedTag(CloseInteractionCombo, "Escape"),
                 OcrEngine = SelectedOcrModel() == OcrModelManager.NoModel ? "None" : "Advanced",
                 OcrModel = SelectedOcrModel(),

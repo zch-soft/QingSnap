@@ -43,6 +43,7 @@ public partial class App : System.Windows.Application
 
         _hostWindow = new MainWindow();
         DiagnosticLog.Info("Application", "Main window and tray host created.");
+        _ = Task.Run(() => new ClipboardTempFileStore().CleanupExpired());
         MainWindow = _hostWindow;
         _hostWindow.Show();
         ResourceDiagnostics.Sample("AppStarted");

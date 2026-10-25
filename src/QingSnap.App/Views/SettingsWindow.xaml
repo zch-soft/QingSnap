@@ -692,11 +692,32 @@
                                     <TextBox x:Name="MultiPrefixBox" />
                                 </StackPanel>
                             </Grid>
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="1.4*" />
+                                    <ColumnDefinition Width="16" />
+                                    <ColumnDefinition Width="1.4*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="多图复制到表格的排布" />
+                                    <ComboBox x:Name="MultiClipboardLayoutCombo">
+                                        <ComboBoxItem Content="自动（矩阵按原布局，自由选区一列）" Tag="Auto" />
+                                        <ComboBoxItem Content="固定一列（N × 1）" Tag="Column" />
+                                        <ComboBoxItem Content="固定一行（1 × N）" Tag="Row" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
+                                    <CheckBox x:Name="MultiClipboardFileDropCheck"
+                                              Content="同时提供文件列表（CF_HDROP）"
+                                              ToolTip="便于资源管理器或邮件客户端接收多张文件；部分 Office 场景可能优先按文件粘贴" />
+                                </StackPanel>
+                            </Grid>
                             <TextBlock Margin="0,12,0,0"
                                        FontSize="10.5"
                                        Foreground="{StaticResource TextMuted}"
                                        TextWrapping="Wrap"
-                                       Text="单图输出会保留透明背景并向外扩展指定像素；多图输出把每个选区写入历史目录下的独立组文件夹，文件名为“前缀_序号”。多选区暂不支持标注、钉图、OCR 和长截图。" />
+                                       Text="单图输出会保留透明背景并向外扩展指定像素；多图输出把每个选区写入历史目录下的独立组文件夹，文件名为“前缀_序号”（矩阵为“前缀_行号_列号”）。多图复制会写入 HTML 表格与临时 PNG 文件，Word/Excel/WPS 可按单元格粘贴；同时保留首图的 PNG/DIB 供其他应用使用。多选区暂不支持标注、钉图、OCR 和长截图。" />
+
                         </StackPanel>
                     </Border>
 

@@ -655,7 +655,7 @@ public sealed class CaptureCoordinator
                     // CompleteCaptureAsync stores the padded composite region; keep the
                     // actual selection set so "repeat last" does not accumulate padding.
                     _stateStore.SaveLastSelectionSet(
-                        CreateGlobalSelection(globalRegions, request.Output.Padding));
+                        CreateGlobalSelection(request.Output, globalRegions));
                 }
                 else
                 {
@@ -677,7 +677,7 @@ public sealed class CaptureCoordinator
                     if (saved)
                     {
                         _stateStore.SaveLastSelectionSet(
-                            CreateGlobalSelection(globalRegions, request.Output.Padding));
+                            CreateGlobalSelection(request.Output, globalRegions));
                     }
 
                     break;
@@ -695,13 +695,78 @@ public sealed class CaptureCoordinator
     private bool ShouldForcePng(CaptureOverlayActionEventArgs request) =>
         request.Output.HasTransparency;
 
-    private SelectionSet CreateGlobalSelection(
-        IReadOnlyList<DrawingRectangle> regions,
-        int padding) =>
-        new(
+    private static IReadOnlyList<string> BuildMultiFileNames(
+        CaptureSelectionOutput output,
+        string prefix,
+        string extension) =>
+        Enumerable.Range(0, output.Images.Count)
+            .Select(index => SelectionOutputNaming.MultiFileName(
+                prefix,
+                index,
+                output.Images.Count,
+                output.Matrix,
+                output.Cells,
+                extension))
+            .ToArray();
+
+    private void WriteGroupManifest(
+        string groupName,
+        CaptureSelectionOutput output,
+        int count)
+    {
+        try
+        {
+            var directory = Path.Combine(_historyService.HistoryDirectory, groupName);
+            SelectionGroupStore.Write(
+                directory,
+                new SelectionGroupManifest(
+                    SelectionGroupManifest.CurrentVersion,
+                    groupName.Replace('\\', '/'),
+                    output.Mode,
+                    output.Matrix?.Rows ?? 0,
+                    output.Matrix?.Columns ?? 0,
+                    count,
+                    DateTimeOffset.UtcNow));
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            DiagnosticLog.Warning("HistoryGroup", $"多图组标记写入失败：{exception.Message}");
+        }
+    }
+
+    private static SelectionSet CreateGlobalSelection(
+        CaptureSelectionOutput output,
+        IReadOnlyList<DrawingRectangle> regions)
+    {
+        var padding = Math.Clamp(output.Padding, 0, 200);
+        if (output.Mode == QingSnap.App.Models.SelectionMode.Matrix &&
+            output.Matrix is { } matrix &&
+            output.Regions.Count > 0 &&
+            regions.Count > 0)
+        {
+            var offsetX = regions[0].X - output.Regions[0].X;
+            var offsetY = regions[0].Y - output.Regions[0].Y;
+            var globalMatrix = matrix with
+            {
+                Bounds = new CaptureRegion(
+                    matrix.Bounds.X + offsetX,
+                    matrix.Bounds.Y + offsetY,
+                    matrix.Bounds.Width,
+                    matrix.Bounds.Height)
+            };
+            return new SelectionSet(
+                QingSnap.App.Models.SelectionMode.Matrix,
+                regions.Select(CaptureRegion.FromRectangle).ToArray(),
+                globalMatrix,
+                padding);
+        }
+
+        return new SelectionSet(
             QingSnap.App.Models.SelectionMode.Free,
             regions.Select(CaptureRegion.FromRectangle).ToArray(),
-            Padding: Math.Clamp(padding, 0, 200));
+            Padding: padding);
+    }
 
     private async Task CompleteCaptureSetAsync(
         CaptureOverlayActionEventArgs request,
@@ -714,14 +779,10 @@ public sealed class CaptureCoordinator
         var groupName = CreateHistoryGroupName();
         var prefix = _settingsService.Current.MultiImageFileNamePrefix;
         var extension = SelectionOutputNaming.GetExtension(_settingsService.Current.OutputFormat);
+        var names = BuildMultiFileNames(request.Output, prefix, extension);
         var savedPaths = new List<string>(images.Count);
         for (var index = 0; index < images.Count; index++)
         {
-            var fileName = SelectionOutputNaming.FreeFileName(
-                prefix,
-                index + 1,
-                images.Count,
-                extension);
             var context = CaptureSourceMetadataService.Create(
                 globalRegions[index],
                 isLongCapture: false,
@@ -729,7 +790,7 @@ public sealed class CaptureCoordinator
             var path = _historyService.SaveWithFileName(
                 images[index],
                 groupName,
-                fileName,
+                names[index],
                 context);
             savedPaths.Add(path);
             if (request.Tags.Count > 0)
@@ -738,8 +799,9 @@ public sealed class CaptureCoordinator
             }
         }
 
+        WriteGroupManifest(groupName, request.Output, images.Count);
         _stateStore.SaveLastSelectionSet(
-            CreateGlobalSelection(globalRegions, request.Output.Padding));
+            CreateGlobalSelection(request.Output, globalRegions));
         if (request.CompositeImage is { } compositeForPin)
         {
             _pinHistory.AddCapture(
@@ -752,14 +814,11 @@ public sealed class CaptureCoordinator
 
         var copyRequested = forceCopy || _settingsService.Current.AutoCopy;
         var copiedToClipboard = false;
-        if (copyRequested && request.CompositeImage is { } composite)
+        if (copyRequested)
         {
             try
             {
-                await _clipboardService.CopyCaptureImageAsync(
-                    composite,
-                    CaptureRegion.FromRectangle(compositeRegion));
-                copiedToClipboard = true;
+                copiedToClipboard = await CopyCaptureSetAsync(request, compositeRegion);
             }
             catch (Exception exception)
             {
@@ -782,6 +841,43 @@ public sealed class CaptureCoordinator
                 savedPaths));
     }
 
+    private async Task<bool> CopyCaptureSetAsync(
+        CaptureOverlayActionEventArgs request,
+        DrawingRectangle compositeRegion)
+    {
+        try
+        {
+            var result = await _clipboardService.CopyCaptureSetAsync(new CaptureSetClipboardRequest(
+                request.Images,
+                request.Regions,
+                request.Output.Mode,
+                request.Output.Matrix,
+                request.Output.Cells,
+                CaptureRegion.FromRectangle(compositeRegion),
+                _settingsService.Current.MultiImageClipboardLayout,
+                _settingsService.Current.MultiImageFileNamePrefix,
+                request.Output.Padding,
+                _settingsService.Current.MultiImageClipboardFileDrop));
+            return result.FilePaths.Count == request.Images.Count;
+        }
+        catch (Exception exception)
+        {
+            DiagnosticLog.Error(
+                "Clipboard",
+                exception,
+                "复制多图图像集失败，已回退为复制透明合成图。");
+            if (request.CompositeImage is not { } composite)
+            {
+                throw;
+            }
+
+            await _clipboardService.CopyCaptureImageAsync(
+                composite,
+                CaptureRegion.FromRectangle(compositeRegion));
+            return true;
+        }
+    }
+
     private bool SaveSelectionSetAs(CaptureOverlayActionEventArgs request)
     {
         var dialog = new Microsoft.Win32.OpenFolderDialog
@@ -797,13 +893,7 @@ public sealed class CaptureCoordinator
         var images = request.Output.Images;
         var prefix = _settingsService.Current.MultiImageFileNamePrefix;
         var extension = SelectionOutputNaming.GetExtension(_settingsService.Current.OutputFormat);
-        var names = Enumerable.Range(0, images.Count)
-            .Select(index => SelectionOutputNaming.FreeFileName(
-                prefix,
-                index + 1,
-                images.Count,
-                extension))
-            .ToArray();
+        var names = BuildMultiFileNames(request.Output, prefix, extension);
         var existing = names
             .Where(name => File.Exists(Path.Combine(dialog.FolderName, name)))
             .ToArray();
