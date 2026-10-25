@@ -649,10 +649,9 @@ public sealed class CaptureCoordinator
                         request.PrefetchedOcr,
                         sourceMetadata: sourceMetadata,
                         tags: request.Tags);
-                    if (request.Regions.Count > 1)
-                    {
-                        _stateStore.SaveLastSelectionSet(CreateGlobalSelection(globalRegions));
-                    }
+                    // CompleteCaptureAsync stores the padded composite region; keep the
+                    // actual selection set so "repeat last" does not accumulate padding.
+                    _stateStore.SaveLastSelectionSet(CreateGlobalSelection(globalRegions));
                 }
                 else
                 {
