@@ -84,9 +84,20 @@ public sealed class CaptureHistoryFileNameTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_directory))
+        for (var attempt = 0; attempt < 20 && Directory.Exists(_directory); attempt++)
         {
-            Directory.Delete(_directory, recursive: true);
+            try
+            {
+                Directory.Delete(_directory, recursive: true);
+            }
+            catch (IOException)
+            {
+                Thread.Sleep(50);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                Thread.Sleep(50);
+            }
         }
     }
 }
