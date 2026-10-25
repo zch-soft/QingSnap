@@ -667,6 +667,41 @@
 
                     <Border Padding="18" Margin="0,0,0,14" Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8">
                         <StackPanel>
+                            <TextBlock Style="{StaticResource SectionLabel}" Text="MULTI SELECTION  /  多选区" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="1.4*" />
+                                    <ColumnDefinition Width="16" />
+                                    <ColumnDefinition Width="1.4*" />
+                                    <ColumnDefinition Width="16" />
+                                    <ColumnDefinition Width="1.2*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="输出方式" />
+                                    <ComboBox x:Name="MultiOutputCombo">
+                                        <ComboBoxItem Content="单图（透明背景）" Tag="SingleImage" />
+                                        <ComboBoxItem Content="多图（每个选区一个文件）" Tag="MultipleFiles" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="外扩边距（0–200 px）" />
+                                    <TextBox x:Name="MultiPaddingBox" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="4">
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="多图文件名前缀" />
+                                    <TextBox x:Name="MultiPrefixBox" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Margin="0,12,0,0"
+                                       FontSize="10.5"
+                                       Foreground="{StaticResource TextMuted}"
+                                       TextWrapping="Wrap"
+                                       Text="单图输出会保留透明背景并向外扩展指定像素；多图输出把每个选区写入历史目录下的独立组文件夹，文件名为“前缀_序号”。多选区暂不支持标注、钉图、OCR 和长截图。" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Padding="18" Margin="0,0,0,14" Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8">
+                        <StackPanel>
                             <TextBlock Style="{StaticResource SectionLabel}" Text="OUTPUT  /  保存与记录" />
                             <Grid>
                                 <Grid.ColumnDefinitions>

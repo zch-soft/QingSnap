@@ -94,6 +94,9 @@ public partial class SettingsWindow : Window
         SmartSelectionCheck.IsChecked = settings.SmartWindowSelection;
         MagnifierCheck.IsChecked = settings.ShowMagnifier;
         QuickCaptureTagsCheck.IsChecked = settings.ShowQuickCaptureTags;
+        SelectComboByTag(MultiOutputCombo, settings.MultiRegionOutputMode);
+        MultiPaddingBox.Text = settings.MultiRegionPadding.ToString();
+        MultiPrefixBox.Text = settings.MultiImageFileNamePrefix;
         SelectComboByTag(CloseInteractionCombo, settings.CloseInteraction);
         SelectComboByTag(
             OcrModelCombo,
@@ -127,6 +130,9 @@ public partial class SettingsWindow : Window
                 SmartWindowSelection = SmartSelectionCheck.IsChecked == true,
                 ShowMagnifier = MagnifierCheck.IsChecked == true,
                 ShowQuickCaptureTags = QuickCaptureTagsCheck.IsChecked == true,
+                MultiRegionOutputMode = SelectedTag(MultiOutputCombo, "SingleImage"),
+                MultiRegionPadding = ParseInt(MultiPaddingBox, "多选区外扩边距"),
+                MultiImageFileNamePrefix = MultiPrefixBox.Text,
                 CloseInteraction = SelectedTag(CloseInteractionCombo, "Escape"),
                 OcrEngine = SelectedOcrModel() == OcrModelManager.NoModel ? "None" : "Advanced",
                 OcrModel = SelectedOcrModel(),
