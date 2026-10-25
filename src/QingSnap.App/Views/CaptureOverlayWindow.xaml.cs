@@ -31,6 +31,7 @@ public partial class CaptureOverlayWindow : Window
 
     private readonly ScreenSnapshot _snapshot;
     private readonly DrawingRectangle? _initialLocalRegion;
+    private readonly SelectionSet? _initialSelectionSet;
     private readonly IReadOnlyList<DrawingRectangle?> _recallLocalRegions;
     private readonly bool _showActionToolbar;
     private readonly AppSettings _settings;
@@ -106,10 +107,12 @@ public partial class CaptureOverlayWindow : Window
         QrCodeService? qrCodeService = null,
         ClipboardService? clipboardService = null,
         Func<CancellationToken, Task<IReadOnlyList<string>>>? loadTagsAsync = null,
-        SelectionPresetStore? presetStore = null)
+        SelectionPresetStore? presetStore = null,
+        SelectionSet? initialSelectionSet = null)
     {
         _snapshot = snapshot;
         _initialLocalRegion = initialLocalRegion;
+        _initialSelectionSet = initialSelectionSet;
         _recallLocalRegions = recallLocalRegions ?? [];
         _recallIndex = recallIndex >= 0 && recallIndex < _recallLocalRegions.Count
             ? recallIndex
@@ -231,7 +234,11 @@ public partial class CaptureOverlayWindow : Window
         UpdateHintPosition();
         ShowFullShade();
 
-        if (_initialLocalRegion is { Width: > 0, Height: > 0 } initialRegion)
+        if (_initialSelectionSet is { HasSelection: true } initialSelectionSet)
+        {
+            LoadSelectionSet(initialSelectionSet);
+        }
+        else if (_initialLocalRegion is { Width: > 0, Height: > 0 } initialRegion)
         {
             LoadLocalSelection(initialRegion);
         }

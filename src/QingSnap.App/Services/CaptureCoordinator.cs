@@ -16,6 +16,7 @@ public sealed class CaptureCoordinator
     private readonly OcrService _ocrService;
     private readonly QrCodeService _qrCodeService;
     private readonly AppSettingsService _settingsService;
+    private readonly SelectionPresetStore _presetStore;
     private readonly PinHistoryBuffer _pinHistory = new();
     private readonly SemaphoreSlim _pinRequestGate = new(1, 1);
     private HistoryWindow? _historyWindow;
@@ -40,7 +41,10 @@ public sealed class CaptureCoordinator
         _ocrService = ocrService;
         _qrCodeService = qrCodeService;
         _settingsService = settingsService;
+        _presetStore = new SelectionPresetStore(settingsService.DataDirectory);
     }
+
+    public SelectionPresetStore PresetStore => _presetStore;
 
     public event EventHandler<CaptureResult>? CaptureCompleted;
     public event EventHandler<string>? CaptureFailed;
@@ -150,6 +154,13 @@ public sealed class CaptureCoordinator
 
     public void RepeatLastCapture()
     {
+        var lastSelection = _stateStore.LoadLastSelectionSet();
+        if (lastSelection is { HasSelection: true })
+        {
+            OpenCaptureOverlay(null, initialSelectionSet: lastSelection);
+            return;
+        }
+
         var recentRegions = _stateStore.LoadRecentRegions();
         if (recentRegions.Count == 0)
         {
@@ -158,6 +169,17 @@ public sealed class CaptureCoordinator
         }
 
         OpenCaptureOverlay(recentRegions[0], recallHistoryIndex: 0);
+    }
+
+    public void StartNamedSelectionCapture(SelectionPreset preset)
+    {
+        if (preset.Selection is not { HasSelection: true })
+        {
+            CaptureFailed?.Invoke(this, "命名选区中没有有效区域。");
+            return;
+        }
+
+        OpenCaptureOverlay(null, initialSelectionSet: preset.Selection);
     }
 
     public void OpenHistoryWindow()
@@ -316,7 +338,10 @@ public sealed class CaptureCoordinator
         }
     }
 
-    private void OpenCaptureOverlay(CaptureRegion? initialRegion, int recallHistoryIndex = -1)
+    private void OpenCaptureOverlay(
+        CaptureRegion? initialRegion,
+        int recallHistoryIndex = -1,
+        SelectionSet? initialSelectionSet = null)
     {
         if (_isCapturing)
         {
@@ -327,9 +352,24 @@ public sealed class CaptureCoordinator
         {
             _isCapturing = true;
             var initialSourceWindow = NativeMethods.GetForegroundWindow();
-            var snapshot = initialRegion is null
-                ? _captureService.CaptureScreenContainingCursor()
-                : _captureService.CaptureScreenContainingRegion(initialRegion.ToRectangle());
+            ScreenSnapshot snapshot;
+            try
+            {
+                snapshot = initialSelectionSet is { Regions.Count: > 0 }
+                    ? _captureService.CaptureScreenContainingRegion(
+                        initialSelectionSet.Regions[0].ToRectangle())
+                    : initialRegion is null
+                        ? _captureService.CaptureScreenContainingCursor()
+                        : _captureService.CaptureScreenContainingRegion(initialRegion.ToRectangle());
+            }
+            catch (InvalidOperationException exception)
+            {
+                CaptureFailed?.Invoke(this, $"{exception.Message} 已回到全屏选择。");
+                initialSelectionSet = null;
+                initialRegion = null;
+                snapshot = _captureService.CaptureScreenContainingCursor();
+            }
+
             DrawingRectangle? initialLocalRegion = initialRegion is null
                 ? null
                 : new DrawingRectangle(
@@ -337,6 +377,9 @@ public sealed class CaptureCoordinator
                     initialRegion.Y - snapshot.Bounds.Y,
                     initialRegion.Width,
                     initialRegion.Height);
+            var localSelectionSet = initialSelectionSet is null
+                ? null
+                : ToLocalSelectionSet(initialSelectionSet, snapshot.Bounds);
             var recentRegions = _stateStore.LoadRecentRegions();
             var recallLocalRegions = ToLocalRegions(recentRegions, snapshot.Bounds);
             var overlay = new CaptureOverlayWindow(
@@ -348,16 +391,28 @@ public sealed class CaptureCoordinator
                 ocrService: _ocrService,
                 qrCodeService: _qrCodeService,
                 clipboardService: _clipboardService,
-                loadTagsAsync: _historyService.LoadAllTagsAsync);
+                loadTagsAsync: _historyService.LoadAllTagsAsync,
+                presetStore: _presetStore,
+                initialSelectionSet: localSelectionSet);
             var longCaptureStarted = false;
 
             overlay.ActionRequested += async (_, request) =>
             {
-                var globalRegion = new DrawingRectangle(
-                    snapshot.Bounds.X + request.LocalRegion.X,
-                    snapshot.Bounds.Y + request.LocalRegion.Y,
-                    request.LocalRegion.Width,
-                    request.LocalRegion.Height);
+                var globalRegions = request.Output.Regions
+                    .Select(region => new DrawingRectangle(
+                        snapshot.Bounds.X + region.X,
+                        snapshot.Bounds.Y + region.Y,
+                        region.Width,
+                        region.Height))
+                    .ToArray();
+                var globalRegion = globalRegions[0];
+                var compositeRegion = request.Output.CompositeRegion is { } box
+                    ? new DrawingRectangle(
+                        snapshot.Bounds.X + box.X,
+                        snapshot.Bounds.Y + box.Y,
+                        box.Width,
+                        box.Height)
+                    : globalRegion;
                 var sourceMetadata = CaptureSourceMetadataService.Create(
                     globalRegion,
                     isLongCapture: false,
@@ -407,7 +462,12 @@ public sealed class CaptureCoordinator
                 overlay.Close();
                 try
                 {
-                    await HandleOverlayActionAsync(request, globalRegion, sourceMetadata);
+                    await HandleOverlayActionAsync(
+                        request,
+                        globalRegions,
+                        compositeRegion,
+                        sourceMetadata,
+                        initialSourceWindow);
                 }
                 catch (Exception exception)
                 {
@@ -517,8 +577,10 @@ public sealed class CaptureCoordinator
 
     private async Task HandleOverlayActionAsync(
         CaptureOverlayActionEventArgs request,
-        DrawingRectangle globalRegion,
-        CaptureHistoryContext sourceMetadata)
+        IReadOnlyList<DrawingRectangle> globalRegions,
+        DrawingRectangle compositeRegion,
+        CaptureHistoryContext sourceMetadata,
+        nint initialSourceWindow)
     {
         switch (request.Action)
         {
@@ -526,7 +588,7 @@ public sealed class CaptureCoordinator
                 {
                     var (imagePath, _) = SaveCaptureToHistory(
                         request.Image,
-                        globalRegion,
+                        globalRegions[0],
                         request.PrefetchedOcr,
                         tags: request.Tags,
                         sourceMetadata: sourceMetadata);
@@ -537,7 +599,7 @@ public sealed class CaptureCoordinator
                 {
                     var (imagePath, _) = SaveCaptureToHistory(
                         request.Image,
-                        globalRegion,
+                        globalRegions[0],
                         tags: request.Tags,
                         sourceMetadata: sourceMetadata);
                     RecognizeQrCode(request.Image, imagePath);
@@ -547,34 +609,182 @@ public sealed class CaptureCoordinator
                 {
                     var (imagePath, _) = SaveCaptureToHistory(
                         request.Image,
-                        globalRegion,
+                        globalRegions[0],
                         request.PrefetchedOcr,
                         tags: request.Tags,
                         sourceMetadata: sourceMetadata);
-                    PinImage(imagePath, globalRegion, request.Image, request.PrefetchedOcr);
+                    PinImage(imagePath, globalRegions[0], request.Image, request.PrefetchedOcr);
                     break;
                 }
             case CaptureOverlayAction.Copy:
-                await CompleteCaptureAsync(
-                    request.Image,
-                    globalRegion,
-                    true,
-                    request.PrefetchedOcr,
-                    sourceMetadata: sourceMetadata,
-                    tags: request.Tags);
-                break;
             case CaptureOverlayAction.Confirm:
-                await CompleteCaptureAsync(
-                    request.Image,
-                    globalRegion,
-                    prefetchedOcr: request.PrefetchedOcr,
-                    sourceMetadata: sourceMetadata,
-                    tags: request.Tags);
+                if (request.Regions.Count == 1)
+                {
+                    await CompleteCaptureAsync(
+                        request.CompositeImage ?? request.Image,
+                        compositeRegion,
+                        forceCopy: request.Action == CaptureOverlayAction.Copy,
+                        request.PrefetchedOcr,
+                        sourceMetadata: sourceMetadata,
+                        tags: request.Tags);
+                }
+                else
+                {
+                    await CompleteCaptureSetAsync(
+                        request,
+                        globalRegions,
+                        compositeRegion,
+                        request.Action == CaptureOverlayAction.Copy,
+                        initialSourceWindow);
+                }
                 break;
             case CaptureOverlayAction.Save:
-                SaveImageAs(request.Image);
+                if (request.Regions.Count == 1)
+                {
+                    SaveImageAs(request.CompositeImage ?? request.Image);
+                }
+                else
+                {
+                    SaveSelectionSetAs(request);
+                }
                 break;
         }
+    }
+
+    private async Task CompleteCaptureSetAsync(
+        CaptureOverlayActionEventArgs request,
+        IReadOnlyList<DrawingRectangle> globalRegions,
+        DrawingRectangle compositeRegion,
+        bool forceCopy,
+        nint initialSourceWindow)
+    {
+        var images = request.Output.Images;
+        var groupName = CreateHistoryGroupName();
+        var prefix = _settingsService.Current.MultiImageFileNamePrefix;
+        var extension = SelectionOutputNaming.GetExtension(_settingsService.Current.OutputFormat);
+        var savedPaths = new List<string>(images.Count);
+        for (var index = 0; index < images.Count; index++)
+        {
+            var fileName = SelectionOutputNaming.FreeFileName(
+                prefix,
+                index + 1,
+                images.Count,
+                extension);
+            var context = CaptureSourceMetadataService.Create(
+                globalRegions[index],
+                isLongCapture: false,
+                initialSourceWindow);
+            var path = _historyService.SaveWithFileName(
+                images[index],
+                groupName,
+                fileName,
+                context);
+            savedPaths.Add(path);
+            if (request.Tags.Count > 0)
+            {
+                _ = AttachCaptureTagsAsync(path, request.Tags);
+            }
+        }
+
+        _stateStore.SaveLastSelectionSet(new SelectionSet(
+            QingSnap.App.Models.SelectionMode.Free,
+            globalRegions.Select(CaptureRegion.FromRectangle).ToArray(),
+            Padding: Math.Clamp(_settingsService.Current.MultiRegionPadding, 0, 200)));
+        _historyWindow?.RefreshHistory();
+
+        var copyRequested = forceCopy || _settingsService.Current.AutoCopy;
+        var copiedToClipboard = false;
+        if (copyRequested && request.CompositeImage is { } composite)
+        {
+            try
+            {
+                await _clipboardService.CopyCaptureImageAsync(
+                    composite,
+                    CaptureRegion.FromRectangle(compositeRegion));
+                copiedToClipboard = true;
+            }
+            catch (Exception exception)
+            {
+                DiagnosticLog.Error(
+                    "Clipboard",
+                    exception,
+                    "多选区截图已保存，但复制到剪贴板失败。");
+            }
+        }
+
+        CaptureCompleted?.Invoke(
+            this,
+            new CaptureResult(
+                CaptureRegion.FromRectangle(compositeRegion),
+                savedPaths[0],
+                request.CompositeImage?.PixelWidth ?? images[0].PixelWidth,
+                request.CompositeImage?.PixelHeight ?? images[0].PixelHeight,
+                copyRequested,
+                copiedToClipboard,
+                savedPaths));
+    }
+
+    private void SaveSelectionSetAs(CaptureOverlayActionEventArgs request)
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "选择多图保存目录",
+            Multiselect = false
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var images = request.Output.Images;
+        var prefix = _settingsService.Current.MultiImageFileNamePrefix;
+        var extension = SelectionOutputNaming.GetExtension(_settingsService.Current.OutputFormat);
+        var names = Enumerable.Range(0, images.Count)
+            .Select(index => SelectionOutputNaming.FreeFileName(
+                prefix,
+                index + 1,
+                images.Count,
+                extension))
+            .ToArray();
+        var existing = names
+            .Where(name => File.Exists(Path.Combine(dialog.FolderName, name)))
+            .ToArray();
+        if (existing.Length > 0)
+        {
+            var answer = System.Windows.MessageBox.Show(
+                $"目录中已有 {existing.Length} 个同名文件，是否覆盖？",
+                "保存多图",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Question);
+            if (answer != System.Windows.MessageBoxResult.Yes)
+            {
+                return;
+            }
+        }
+
+        for (var index = 0; index < images.Count; index++)
+        {
+            SaveBitmap(images[index], Path.Combine(dialog.FolderName, names[index]));
+        }
+
+        DiagnosticLog.Info(
+            "Capture",
+            $"Exported {images.Count} regions to {dialog.FolderName}.");
+    }
+
+    private string CreateHistoryGroupName()
+    {
+        var now = DateTime.Now;
+        var month = now.ToString("yyyy-MM");
+        var baseName = now.ToString("yyyyMMdd-HHmmss");
+        var candidate = Path.Combine(month, baseName);
+        var suffix = 2;
+        while (Directory.Exists(Path.Combine(_historyService.HistoryDirectory, candidate)))
+        {
+            candidate = Path.Combine(month, $"{baseName}-{suffix++}");
+        }
+
+        return candidate;
     }
 
     private (string ImagePath, CaptureRegion Region) SaveCaptureToHistory(
@@ -642,6 +852,12 @@ public sealed class CaptureCoordinator
             return;
         }
 
+        SaveBitmap(image, dialog.FileName);
+    }
+
+    private void SaveBitmap(System.Windows.Media.Imaging.BitmapSource image, string path)
+    {
+        var format = _settingsService.Current.OutputFormat;
         System.Windows.Media.Imaging.BitmapEncoder encoder = format switch
         {
             "JPG" => new System.Windows.Media.Imaging.JpegBitmapEncoder
@@ -652,7 +868,7 @@ public sealed class CaptureCoordinator
             _ => new System.Windows.Media.Imaging.PngBitmapEncoder()
         };
         encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(image));
-        using var stream = File.Create(dialog.FileName);
+        using var stream = File.Create(path);
         encoder.Save(stream);
     }
 
@@ -747,6 +963,33 @@ public sealed class CaptureCoordinator
         IReadOnlyList<CaptureRegion> regions,
         DrawingRectangle screenBounds) =>
         regions.Select(region => ToLocalRegion(region, screenBounds)).ToArray();
+
+    private static SelectionSet ToLocalSelectionSet(SelectionSet set, DrawingRectangle screenBounds)
+    {
+        var regions = set.Regions
+            .Where(region => region.IsValid && screenBounds.Contains(region.ToRectangle()))
+            .Select(region => new CaptureRegion(
+                region.X - screenBounds.X,
+                region.Y - screenBounds.Y,
+                region.Width,
+                region.Height))
+            .ToArray();
+        var matrix = set.Matrix is { } spec &&
+                     screenBounds.Contains(spec.Bounds.ToRectangle())
+            ? new MatrixSpec(
+                new CaptureRegion(
+                    spec.Bounds.X - screenBounds.X,
+                    spec.Bounds.Y - screenBounds.Y,
+                    spec.Bounds.Width,
+                    spec.Bounds.Height),
+                spec.Rows,
+                spec.Columns,
+                spec.GapX,
+                spec.GapY,
+                spec.ExcludedCells)
+            : null;
+        return new SelectionSet(set.Mode, regions, matrix, set.Padding);
+    }
 
     private void EnsurePinHistorySeeded()
     {

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using QingSnap.App.Models;
 
 namespace QingSnap.App.Services;
@@ -8,7 +9,8 @@ public sealed class AppStateStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        WriteIndented = true
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() }
     };
 
     private readonly string _statePath;
@@ -69,15 +71,73 @@ public sealed class AppStateStore
     public void SaveLastRegion(CaptureRegion region)
     {
         var recentRegions = CaptureRegionHistory.Add(LoadRecentRegions(), region);
+        WriteState(new PersistedState(
+            region,
+            recentRegions,
+            SelectionSet.Single(region)));
+    }
+
+    public void SaveLastSelectionSet(SelectionSet selection)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+        var regions = selection.Regions?
+            .Where(region => region.IsValid)
+            .ToArray() ?? [];
+        if (regions.Length == 0)
+        {
+            return;
+        }
+
+        var recentRegions = CaptureRegionHistory.Add(LoadRecentRegions(), regions[0]);
+        WriteState(new PersistedState(
+            regions[0],
+            recentRegions,
+            selection with { Regions = regions }));
+    }
+
+    public SelectionSet? LoadLastSelectionSet()
+    {
+        try
+        {
+            if (!File.Exists(_statePath))
+            {
+                return null;
+            }
+
+            var state = JsonSerializer.Deserialize<PersistedState>(
+                File.ReadAllText(_statePath),
+                JsonOptions);
+            if (state?.LastSelectionSet is { HasSelection: true } selection)
+            {
+                return selection;
+            }
+
+            return state?.LastRegion is { IsValid: true } legacyRegion
+                ? SelectionSet.Single(legacyRegion)
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+
+    private void WriteState(PersistedState state)
+    {
         var temporaryPath = _statePath + ".tmp";
-        var json = JsonSerializer.Serialize(new PersistedState(region, recentRegions), JsonOptions);
+        var json = JsonSerializer.Serialize(state, JsonOptions);
         File.WriteAllText(temporaryPath, json);
         File.Move(temporaryPath, _statePath, true);
     }
 
     private sealed record PersistedState(
         CaptureRegion? LastRegion,
-        IReadOnlyList<CaptureRegion>? RecentRegions = null);
+        IReadOnlyList<CaptureRegion>? RecentRegions = null,
+        SelectionSet? LastSelectionSet = null);
 }
 
 internal static class CaptureRegionHistory

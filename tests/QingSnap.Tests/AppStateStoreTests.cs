@@ -52,6 +52,77 @@ public sealed class AppStateStoreTests
     }
 
     [Fact]
+    public void LastSelectionSetRoundTripsWithMultipleRegions()
+    {
+        var directory = CreateTemporaryDirectory();
+        try
+        {
+            var store = new AppStateStore(Path.Combine(directory, "state.json"));
+            store.SaveLastSelectionSet(new SelectionSet(
+                SelectionMode.Free,
+                [new CaptureRegion(1, 2, 10, 20), new CaptureRegion(30, 40, 50, 60)],
+                Padding: 4));
+
+            var loaded = store.LoadLastSelectionSet();
+
+            Assert.NotNull(loaded);
+            Assert.Equal(2, loaded.Regions.Count);
+            Assert.Equal(4, loaded.Padding);
+            Assert.Equal(new CaptureRegion(1, 2, 10, 20), store.LoadLastRegion());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LegacyLastRegionProducesASingleSelectionSet()
+    {
+        var directory = CreateTemporaryDirectory();
+        try
+        {
+            var statePath = Path.Combine(directory, "state.json");
+            File.WriteAllText(statePath, """{"LastRegion":{"X":12,"Y":34,"Width":320,"Height":180}}""");
+            var store = new AppStateStore(statePath);
+
+            var loaded = store.LoadLastSelectionSet();
+
+            Assert.NotNull(loaded);
+            Assert.True(loaded.IsSingle);
+            Assert.Equal(new CaptureRegion(12, 34, 320, 180), Assert.Single(loaded.Regions));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SingleCaptureReplacesAPreviousMultiSelectionSet()
+    {
+        var directory = CreateTemporaryDirectory();
+        try
+        {
+            var store = new AppStateStore(Path.Combine(directory, "state.json"));
+            store.SaveLastSelectionSet(new SelectionSet(
+                SelectionMode.Free,
+                [new CaptureRegion(1, 2, 10, 20), new CaptureRegion(30, 40, 50, 60)]));
+
+            store.SaveLastRegion(new CaptureRegion(7, 8, 90, 100));
+
+            var loaded = store.LoadLastSelectionSet();
+            Assert.NotNull(loaded);
+            Assert.True(loaded.IsSingle);
+            Assert.Equal(new CaptureRegion(7, 8, 90, 100), Assert.Single(loaded.Regions));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void RegionHistoryCursorLoopsAfterTheFifthSelection()
     {
         var cursor = -1;

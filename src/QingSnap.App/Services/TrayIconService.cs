@@ -54,6 +54,25 @@ public sealed class TrayIconService : IDisposable
 
     public void ShowCaptureCompleted(CaptureResult result)
     {
+        if (result.ImageCount > 1)
+        {
+            if (result.CopiedToClipboard)
+            {
+                _toastNotifications.ShowSuccess($"已保存 {result.ImageCount} 张截图并复制合成图");
+            }
+            else if (result.CopyRequested)
+            {
+                _toastNotifications.ShowWarning(
+                    $"已保存 {result.ImageCount} 张截图\n剪贴板仍被占用");
+            }
+            else
+            {
+                _toastNotifications.ShowSuccess($"已保存 {result.ImageCount} 张截图");
+            }
+
+            return;
+        }
+
         if (result.CopiedToClipboard)
         {
             _toastNotifications.ShowSuccess("已复制到剪贴板");

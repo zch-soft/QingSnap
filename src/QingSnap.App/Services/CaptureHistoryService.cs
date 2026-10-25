@@ -52,16 +52,41 @@ public sealed class CaptureHistoryService : IDisposable
 
     private string SearchIndexDirectory => Path.Combine(HistoryDirectory, ".qingsnap-index");
 
-    public string Save(BitmapSource image, CaptureHistoryContext? context = null)
+    public string Save(BitmapSource image, CaptureHistoryContext? context = null) =>
+        SaveCore(image, context, relativeDirectory: null, fileName: null);
+
+    public string SaveWithFileName(
+        BitmapSource image,
+        string relativeDirectory,
+        string fileName,
+        CaptureHistoryContext? context = null) =>
+        SaveCore(image, context, relativeDirectory, fileName);
+
+    private string SaveCore(
+        BitmapSource image,
+        CaptureHistoryContext? context,
+        string? relativeDirectory,
+        string? fileName)
     {
         var now = DateTime.Now;
-        var monthDirectory = Path.Combine(HistoryDirectory, now.ToString("yyyy-MM"));
-        Directory.CreateDirectory(monthDirectory);
+        var historyRoot = Path.GetFullPath(HistoryDirectory);
+        var directory = Path.GetFullPath(Path.Combine(
+            historyRoot,
+            string.IsNullOrWhiteSpace(relativeDirectory)
+                ? now.ToString("yyyy-MM")
+                : relativeDirectory));
+        if (!directory.StartsWith(historyRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(directory, historyRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("截图保存目录不在历史目录内。");
+        }
+
+        Directory.CreateDirectory(directory);
 
         CleanupExpiredItems();
         var format = _settingsService.Current.OutputFormat;
         var extension = format == "JPG" ? ".jpg" : format == "BMP" ? ".bmp" : ".png";
-        var path = Path.Combine(monthDirectory, $"{now:yyyyMMdd_HHmmss_fff}{extension}");
+        var path = Path.Combine(directory, NormalizeFileName(fileName, now, extension));
         BitmapEncoder encoder = format switch
         {
             "JPG" => new JpegBitmapEncoder { QualityLevel = _settingsService.Current.JpegQuality },
@@ -87,6 +112,29 @@ public sealed class CaptureHistoryService : IDisposable
         _metadataStore.QueueUpsert(metadata);
         _ = PopulateImageHashAsync(metadata, _migrationCancellation.Token);
         return path;
+    }
+
+    private static string NormalizeFileName(string? fileName, DateTime now, string extension)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return $"{now:yyyyMMdd_HHmmss_fff}{extension}";
+        }
+
+        var name = Path.GetFileName(fileName.Trim());
+        if (string.IsNullOrWhiteSpace(name) || name is "." or "..")
+        {
+            return $"{now:yyyyMMdd_HHmmss_fff}{extension}";
+        }
+
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+        {
+            name = name.Replace(invalid, '_');
+        }
+
+        return Path.HasExtension(name)
+            ? Path.GetFileNameWithoutExtension(name) + extension
+            : name + extension;
     }
 
     public HistorySnapshot LoadSnapshot(int maximumItems, CancellationToken cancellationToken)

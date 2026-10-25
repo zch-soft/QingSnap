@@ -6,4 +6,10 @@ public sealed record CaptureResult(
     int ImageWidth,
     int ImageHeight,
     bool CopyRequested,
-    bool CopiedToClipboard);
+    bool CopiedToClipboard,
+    IReadOnlyList<string>? ImagePaths = null)
+{
+    public IReadOnlyList<string> SavedImagePaths => ImagePaths ?? [ImagePath];
+
+    public int ImageCount => SavedImagePaths.Count;
+}
