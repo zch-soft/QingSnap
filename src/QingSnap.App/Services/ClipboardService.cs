@@ -189,6 +189,21 @@ public sealed class ClipboardService : IDisposable
     {
         var data = new System.Windows.DataObject();
         data.SetImage(image);
+        try
+        {
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(image));
+            using var pngStream = new MemoryStream();
+            encoder.Save(pngStream);
+            data.SetData("PNG", new MemoryStream(pngStream.ToArray()));
+        }
+        catch (Exception exception)
+        {
+            DiagnosticLog.Warning(
+                "Clipboard",
+                $"PNG 剪贴板格式写入失败，仍会提供 DIB：{exception.Message}");
+        }
+
         if (region is not null)
         {
             data.SetData(
