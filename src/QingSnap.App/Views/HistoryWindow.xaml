@@ -361,6 +361,11 @@
                                    Text="正在读取…" />
                     </StackPanel>
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <ToggleButton x:Name="FoldGroupsButton" Style="{StaticResource ViewModeButton}"
+                                      Width="Auto" MinWidth="84" Margin="0,0,6,0" Padding="10,0"
+                                      FontFamily="{StaticResource UiFont}" FontSize="10.5"
+                                      Content="按组折叠" ToolTip="多图输出的一组文件只显示第一张"
+                                      AutomationProperties.Name="按组折叠" Click="OnFoldGroupsClick" />
                         <ToggleButton x:Name="ListViewButton" Style="{StaticResource ViewModeButton}"
                                       IsChecked="True" ToolTip="列表模式" AutomationProperties.Name="列表模式" Click="OnListViewClick">
                             <controls:QingSnapIcon Kind="ListView" Width="18" Height="18" />
@@ -535,6 +540,23 @@
                                                        Foreground="#FFF3F7F9"
                                                        Text="{Binding DateText}" />
                                             <StackPanel Grid.Row="1" Margin="0,15,0,0">
+                                                <Border Margin="0,0,0,7" Padding="6,2" HorizontalAlignment="Left"
+                                                        Background="#FF17303A" BorderBrush="#6676DFEE"
+                                                        BorderThickness="1" CornerRadius="4">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding HasGroup, Mode=OneWay}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <TextBlock FontFamily="{StaticResource UiFont}" FontSize="10"
+                                                               Foreground="#FF76DFEE"
+                                                               Text="{Binding GroupLabel, Mode=OneWay}" />
+                                                </Border>
                                                 <TextBlock FontFamily="{StaticResource UiFont}" FontSize="12" Foreground="{StaticResource MutedBrush}">
                                                     <Run Text="尺寸  " /><Run Text="{Binding DimensionsText, Mode=OneWay}" Foreground="#FFD5DEE3" />
                                                 </TextBlock>
@@ -716,11 +738,27 @@
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="*" />
                                                         <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="Auto" />
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock FontFamily="{StaticResource UiFont}" FontSize="10"
                                                                Foreground="#FF718591" Text="{Binding Item.FileName, Mode=OneWay}"
                                                                TextTrimming="CharacterEllipsis" />
                                                     <TextBlock Grid.Column="1" Margin="7,0,0,0"
+                                                               FontFamily="{StaticResource UiFont}" FontSize="9.5"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               Text="{Binding Item.GroupShortLabel, Mode=OneWay}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Item.HasGroup, Mode=OneWay}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <TextBlock Grid.Column="2" Margin="7,0,0,0"
                                                                FontFamily="{StaticResource UiFont}" FontSize="9.5"
                                                                Foreground="{StaticResource AccentBrush}"
                                                                Text="{Binding Item.TagsDisplay, Mode=OneWay}"

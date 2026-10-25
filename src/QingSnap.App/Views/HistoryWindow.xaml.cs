@@ -48,6 +48,8 @@ public partial class HistoryWindow : Window
     private bool _isBatchOperation;
     private bool _isGridView;
     private int _gridColumnCount;
+    private bool _foldGroups;
+    private readonly HashSet<string> _visibleGroups = new(StringComparer.OrdinalIgnoreCase);
     private bool _isSynchronizingSelection;
     private readonly HistorySelectionState _selection = new();
     private HistoryOcrIndexProgress? _indexProgress;
@@ -131,6 +133,7 @@ public partial class HistoryWindow : Window
             _selection.Clear();
             VisibleItems.Clear();
             GridRows.Clear();
+            _visibleGroups.Clear();
             _totalMatched = 0;
             _totalBytes = 0;
             _nextOffset = 0;
@@ -196,10 +199,17 @@ public partial class HistoryWindow : Window
             var existingIds = VisibleItems.Select(item => item.MetadataId).ToHashSet();
             foreach (var item in page.Items)
             {
-                if (existingIds.Add(item.MetadataId))
+                if (!existingIds.Add(item.MetadataId))
                 {
-                    VisibleItems.Add(item);
+                    continue;
                 }
+
+                if (!HistoryGroupFilter.ShouldShow(item, _foldGroups, _visibleGroups))
+                {
+                    continue;
+                }
+
+                VisibleItems.Add(item);
             }
 
             if (page.TotalCount >= 0)
@@ -522,6 +532,18 @@ public partial class HistoryWindow : Window
             Placement = PlacementMode.MousePoint
         };
         var suffix = selectedItems.Count > 1 ? $"（{selectedItems.Count} 张）" : string.Empty;
+        if (item.HasGroup && _foldGroups)
+        {
+            var expand = CreateTagMenuItem("显示同组全部", item, isEnabled: true);
+            expand.Click += (_, _) =>
+            {
+                FoldGroupsButton.IsChecked = false;
+                _foldGroups = false;
+                _ = ReloadHistoryAsync();
+            };
+            menu.Items.Add(expand);
+        }
+
         var qrCodeItem = CreateTagMenuItem("识别二维码", item, isEnabled: true);
         qrCodeItem.Click += async (_, _) => await RecognizeHistoryQrCodeAsync(border, item);
         var addItem = CreateTagMenuItem($"添加标签{suffix}…", item, isEnabled: true);
@@ -851,6 +873,18 @@ public partial class HistoryWindow : Window
         HistoryGridControl.Visibility = gridView ? Visibility.Visible : Visibility.Collapsed;
         RestoreSelectionToControls();
         StatusText.Text = gridView ? "已切换到图标模式。" : "已切换到列表模式。";
+    }
+
+    private void OnFoldGroupsClick(object sender, RoutedEventArgs e)
+    {
+        _foldGroups = FoldGroupsButton.IsChecked == true;
+        StatusText.Text = _foldGroups
+            ? "已按多图组折叠：每组只显示第一张，关闭后可查看全部。"
+            : "已显示全部截图。";
+        if (_isReady)
+        {
+            _ = ReloadHistoryAsync();
+        }
     }
 
     private async void OnBatchFavoriteClick(object sender, RoutedEventArgs e) =>

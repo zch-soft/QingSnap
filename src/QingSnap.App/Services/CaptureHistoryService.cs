@@ -228,21 +228,29 @@ public sealed class CaptureHistoryService : IDisposable
     {
         await Task.Run(CleanupExpiredItems, cancellationToken).ConfigureAwait(false);
         var page = await _metadataStore.QueryHistoryAsync(query, cancellationToken).ConfigureAwait(false);
-        var items = page.Items.Select(metadata => new HistoryItem(
-            metadata.FilePath,
-            Path.GetFileName(metadata.FilePath),
-            metadata.CaptureTime.LocalDateTime,
-            metadata.Width,
-            metadata.Height,
-            metadata.FileSize,
-            Thumbnail: null,
-            metadata.IsFavorite,
-            SearchText: string.Empty,
-            metadata.SourceProcess,
-            metadata.SourceWindowTitle,
-            metadata.Tags,
-            metadata.Id,
-            metadata.IsLongCapture)).ToArray();
+        var groupCache = new Dictionary<string, SelectionGroupManifest?>(StringComparer.OrdinalIgnoreCase);
+        var items = page.Items.Select(metadata =>
+        {
+            var group = HistoryGroupFilter.ReadGroupForFile(metadata.FilePath, groupCache);
+            return new HistoryItem(
+                metadata.FilePath,
+                Path.GetFileName(metadata.FilePath),
+                metadata.CaptureTime.LocalDateTime,
+                metadata.Width,
+                metadata.Height,
+                metadata.FileSize,
+                Thumbnail: null,
+                metadata.IsFavorite,
+                SearchText: string.Empty,
+                metadata.SourceProcess,
+                metadata.SourceWindowTitle,
+                metadata.Tags,
+                metadata.Id,
+                metadata.IsLongCapture,
+                group?.GroupId,
+                group?.DisplayLabel,
+                group?.Count ?? 0);
+        }).ToArray();
         return new HistoryItemPage(items, page.TotalCount, page.TotalBytes, page.HasMore);
     }
 
@@ -548,6 +556,7 @@ public sealed class CaptureHistoryService : IDisposable
                 }
             }
 
+            var group = SelectionGroupStore.TryReadForFile(file.FullName);
             return new HistoryItem(
                 file.FullName,
                 file.Name,
@@ -561,7 +570,10 @@ public sealed class CaptureHistoryService : IDisposable
                 metadata?.SourceProcess,
                 metadata?.SourceWindowTitle,
                 tags,
-                metadata?.Id ?? 0);
+                metadata?.Id ?? 0,
+                GroupId: group?.GroupId,
+                GroupLabel: group?.DisplayLabel,
+                GroupCount: group?.Count ?? 0);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or OutOfMemoryException)
         {

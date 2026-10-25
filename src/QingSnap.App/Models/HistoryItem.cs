@@ -16,7 +16,10 @@ public sealed record HistoryItem(
     string? SourceWindowTitle = null,
     IReadOnlyList<string>? Tags = null,
     long MetadataId = 0,
-    bool IsLongCapture = false)
+    bool IsLongCapture = false,
+    string? GroupId = null,
+    string? GroupLabel = null,
+    int GroupCount = 0)
 {
     public string DateText => CreatedAt.ToString("yyyy-MM-dd  HH:mm:ss");
     public string DimensionsText => $"{PixelWidth} × {PixelHeight} px";
@@ -29,6 +32,8 @@ public sealed record HistoryItem(
     public string TagsDisplay => Tags is { Count: > 0 }
         ? "标签  " + string.Join(" · ", Tags)
         : string.Empty;
+    public bool HasGroup => !string.IsNullOrWhiteSpace(GroupId) && !string.IsNullOrWhiteSpace(GroupLabel);
+    public string GroupShortLabel => GroupCount > 0 ? $"组 {GroupCount}" : string.Empty;
 
     private static string FormatBytes(long bytes)
     {
