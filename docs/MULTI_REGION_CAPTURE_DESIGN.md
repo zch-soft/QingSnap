@@ -1,8 +1,8 @@
 # QingSnap 多选区截图设计
 
-- 状态：方案稿（未实现）
+- 状态：第一阶段已实现（2026-10-25）；矩阵选区与 CF_HTML 剪贴板待第二阶段
 - 日期：2026-10-25
-- 适用基线：当前 `fix/selection-move-jitter` 分支
+- 适用基线：`worktree-multi-region-phase1`
 - 相关代码：[CaptureOverlayWindow.xaml.cs](../src/QingSnap.App/Views/CaptureOverlayWindow.xaml.cs)、[CaptureCoordinator.cs](../src/QingSnap.App/Services/CaptureCoordinator.cs)、[ClipboardService.cs](../src/QingSnap.App/Services/ClipboardService.cs)
 
 ## 1. 背景与目标
@@ -539,3 +539,30 @@ public sealed record SelectionPreset(
 - 矩阵单格排除放在第二阶段。
 - 多选区下不提供标注、钉图、OCR、二维码。
 - 跨屏不支持，记录为第三阶段。
+
+## 14. 第一阶段实施记录（2026-10-25）
+
+已完成：
+
+- 自由多选区：连续框选、点击激活、`Alt` 强制新建、`Tab` 循环、方向键/WASD 微调、`Delete` 删除、右键菜单、选区列表面板。
+- 视觉：统一的多洞遮罩、每选区序号徽标、活动选区保留原有边框和手柄。
+- 单图输出：选区并集外接矩形 + 可配置外扩，未选中区域透明；单选区保留标注。
+- 多图输出：每个选区一个文件，写入 `历史目录/yyyy-MM/yyyyMMdd-HHmmss/` 组目录，文件名为 `{Prefix}_{序号}`。
+- 设置：输出方式（单图/多图）、外扩边距、文件名前缀。
+- 命名选区：保存到 `selection-presets.json`；工具栏 ★ 保存，托盘菜单列出，管理窗口支持重命名、删除、用上次选区更新、从上次选区新建。
+- 状态：最近一次完整选区集写入 `state.json`，“重复上次范围”可恢复多选区。
+- 多选区下禁用标注、钉图、OCR、二维码、长截图，并在代码层增加守卫。
+- 剪贴板：第一阶段复制透明合成图；逐格 HTML 表格留待第二阶段。
+- 矩阵文件名工具 `SelectionOutputNaming.MatrixFileName` 已实现并测试，矩阵交互留待第二阶段。
+- 自动化测试：178 通过，0 警告。
+
+尚未验证：
+
+- 真实桌面上的多选区拖拽/缩放、混合 DPI、托盘菜单和管理窗口的人工回归。
+- Excel / Word / WPS 的 CF_HTML 逐格图片粘贴（第二阶段 Spike）。
+
+已知限制：
+
+- 跨屏选区不支持；加载命名选区时超出当前屏幕的区域会被丢弃并回到全屏选择。
+- 多选区输出不包含标注。
+
