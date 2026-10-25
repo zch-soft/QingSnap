@@ -45,7 +45,7 @@ public sealed class TrayIconService : IDisposable
 
     private void RebuildMenu()
     {
-        _menu.Items.Clear();
+        ClearMenu();
         var settings = _settingsService.Current;
         _menu.Items.Add(CreateItem($"区域截图{ShortcutSuffix(settings, HotkeyAction.RegionCapture)}", (_, _) => _captureCoordinator.StartRegionCapture(), true));
         _menu.Items.Add(CreateItem($"长截图（自动滚动）{ShortcutSuffix(settings, HotkeyAction.AutomaticLongCapture)}", (_, _) => _captureCoordinator.StartLongCapture()));
@@ -61,6 +61,16 @@ public sealed class TrayIconService : IDisposable
         _menu.Items.Add(CreateItem("设置", (_, _) => _openSettings()));
         _menu.Items.Add(CreateItem("导出诊断信息", (_, _) => _captureCoordinator.ExportDiagnostics()));
         _menu.Items.Add(CreateItem("退出 QingSnap", (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty)));
+    }
+
+    private void ClearMenu()
+    {
+        foreach (ToolStripItem item in _menu.Items)
+        {
+            item.Dispose();
+        }
+
+        _menu.Items.Clear();
     }
 
     private ToolStripMenuItem CreatePresetMenu()

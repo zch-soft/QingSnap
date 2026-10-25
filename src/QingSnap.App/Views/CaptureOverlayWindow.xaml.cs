@@ -519,6 +519,24 @@ public partial class CaptureOverlayWindow : Window
 
         var key = ResolveShortcutKey(e);
         var modifiers = Keyboard.Modifiers;
+        if (_showActionToolbar &&
+            _selections.Count > 1 &&
+            key is Key.Left or Key.Right or Key.Up or Key.Down &&
+            modifiers is ModifierKeys.None or ModifierKeys.Shift)
+        {
+            var (offsetX, offsetY) = key switch
+            {
+                Key.Left => (-1, 0),
+                Key.Right => (1, 0),
+                Key.Up => (0, -1),
+                _ => (0, 1)
+            };
+            var pixelDistance = modifiers == ModifierKeys.Shift ? 10 : 1;
+            NudgeActiveSelection(offsetX * pixelDistance, offsetY * pixelDistance);
+            e.Handled = true;
+            return;
+        }
+
         if (key is Key.W or Key.A or Key.S or Key.D &&
             modifiers is ModifierKeys.None or ModifierKeys.Shift)
         {
@@ -652,7 +670,10 @@ public partial class CaptureOverlayWindow : Window
             }
         }
 
-        if (_showActionToolbar && _selections.Count > 1 && key == Key.Tab)
+        if (_showActionToolbar &&
+            _selections.Count > 1 &&
+            GeometryEditor.Visibility != Visibility.Visible &&
+            key == Key.Tab)
         {
             CycleActiveSelection(
                 Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -1 : 1);
