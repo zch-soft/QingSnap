@@ -329,8 +329,9 @@ public partial class CaptureOverlayWindow : Window
         _pendingSmartSelection = WpfRect.Empty;
         _dragCreatedSelection = false;
 
-        var forceCreate = modifiers.HasFlag(ModifierKeys.Alt);
-        if (forceCreate)
+        var hitIndex = FindSelectionAt(point);
+        // Ctrl keeps Alt free for the existing "resize from center" gesture.
+        if (modifiers.HasFlag(ModifierKeys.Control))
         {
             BeginNewSelection(new WpfRect(point, point));
             _dragCreatedSelection = true;
@@ -340,7 +341,6 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
-        var hitIndex = FindSelectionAt(point);
         if (hitIndex >= 0)
         {
             if (hitIndex != _activeSelectionIndex)

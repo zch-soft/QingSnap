@@ -92,7 +92,7 @@ private sealed class SelectionItem
 | 空白处按住拖动 | 追加一个新选区，松开后成为活动选区 |
 | 空白处单击 | 仅取消"活动"高亮，已有选区全部保留 |
 | 悬停窗口/控件（智能选择） | 高亮预览，单击采纳为一个选区，可连续点选 |
-| 已有选区内部按住 `Alt` 拖动 | 强制新建，允许重叠或嵌套 |
+| 已有选区内部按住 `Ctrl` 拖动 | 强制新建，允许重叠或嵌套 |
 | 已有选区内部普通拖动 | 移动该选区 |
 
 现有智能预览只在没有任何选区时启用。多选区下改为：只要不在拖拽或标注中，就始终可以预览并点选，这样连续点选多个窗口是最快的多选区入口。
@@ -148,7 +148,8 @@ private sealed class SelectionItem
 | 拖动空白 | 新建选区 |
 | 拖动选区内部 | 移动活动选区 |
 | 拖动边/角 | 缩放活动选区 |
-| `Alt` + 拖动 | 强制新建（允许重叠） |
+| `Ctrl` + 拖动 | 强制新建（允许重叠） |
+| `Alt` + 角点拖动 | 以中心缩放（沿用现有行为） |
 | `Tab` / `Shift+Tab` | 切换活动选区 |
 | `Delete` / `Backspace` | 删除活动选区 |
 | `W/A/S/D`、方向键 | 微调活动选区 1px |
@@ -420,7 +421,7 @@ public sealed record SelectionPreset(
 | 文件 | 现状 | 改造 |
 |---|---|---|
 | `Views/CaptureOverlayWindow.xaml.cs:57` | 单选区字段 | 增加 `_selections`、`_activeSelectionIndex`，`_selection` 变为活动镜像 |
-| `Views/CaptureOverlayWindow.xaml.cs:240` | 鼠标按下 | 新建/激活/移动/`Alt` 新建分支 |
+| `Views/CaptureOverlayWindow.xaml.cs:240` | 鼠标按下 | 新建/激活/移动/`Ctrl` 新建分支 |
 | `Views/CaptureOverlayWindow.xaml.cs:409` | 键盘 | 多选区键位、`Esc` 两级语义、模式切换 |
 | `Views/CaptureOverlayWindow.xaml.cs:871` | `HitTest` | 遍历所有选区，返回命中项与手柄 |
 | `Views/CaptureOverlayWindow.xaml.cs:961` | `SetSelectionCore` | 拆成"更新单个选区"与"更新全部选区视觉" |
@@ -544,7 +545,7 @@ public sealed record SelectionPreset(
 
 已完成：
 
-- 自由多选区：连续框选、点击激活、`Alt` 强制新建、`Tab` 循环、方向键/WASD 微调、`Delete` 删除、右键菜单、选区列表面板。
+- 自由多选区：连续框选、点击激活、`Ctrl` 强制新建、`Tab` 循环、方向键/WASD 微调、`Delete` 删除、右键菜单、选区列表面板。
 - 视觉：统一的多洞遮罩、每选区序号徽标、活动选区保留原有边框和手柄。
 - 单图输出：选区并集外接矩形 + 可配置外扩，未选中区域透明；单选区保留标注。
 - 多图输出：每个选区一个文件，写入 `历史目录/yyyy-MM/yyyyMMdd-HHmmss/` 组目录，文件名为 `{Prefix}_{序号}`。
