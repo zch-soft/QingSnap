@@ -2748,6 +2748,7 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
+        SelectionListPopup.IsOpen = false;
         QuickTagPopup.PlacementTarget = QuickTagButton;
         QuickTagCreatePanel.Visibility = Visibility.Collapsed;
         QuickTagStatusText.Text = _quickTagsLoaded ? string.Empty : "正在读取已有标签…";
@@ -2954,6 +2955,7 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
+        QuickTagPopup.IsOpen = false;
         RebuildSelectionList();
         SelectionListPopup.PlacementTarget = SelectionListButton;
         SelectionListPopup.IsOpen = true;
