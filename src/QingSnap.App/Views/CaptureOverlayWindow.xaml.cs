@@ -38,6 +38,7 @@ public partial class CaptureOverlayWindow : Window
     private readonly QrCodeService? _qrCodeService;
     private readonly ClipboardService? _clipboardService;
     private readonly Func<CancellationToken, Task<IReadOnlyList<string>>>? _loadTagsAsync;
+    private readonly SelectionPresetStore? _presetStore;
     private readonly Rectangle[] _cornerMarks;
     private readonly CaptureAnnotationController _annotationController;
     private readonly DispatcherTimer _adjustmentBadgeTimer = new()
@@ -75,6 +76,23 @@ public partial class CaptureOverlayWindow : Window
     private readonly HashSet<string> _selectedQuickTags = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<string> _availableQuickTags = [];
     private bool _quickTagsLoaded;
+    private readonly List<SelectionItem> _selections = [];
+    private int _activeSelectionIndex = -1;
+    private bool _dragCreatedSelection;
+
+    private SelectionItem? ActiveSelection =>
+        _activeSelectionIndex >= 0 && _activeSelectionIndex < _selections.Count
+            ? _selections[_activeSelectionIndex]
+            : null;
+
+    private sealed class SelectionItem
+    {
+        public WpfRect Rect { get; set; }
+        public DrawingRectangle Pixels { get; set; }
+        public Border Frame { get; init; } = null!;
+        public Border Badge { get; init; } = null!;
+        public TextBlock BadgeText { get; init; } = null!;
+    }
 
     public CaptureOverlayWindow(
         ScreenSnapshot snapshot,
@@ -87,7 +105,8 @@ public partial class CaptureOverlayWindow : Window
         OcrService? ocrService = null,
         QrCodeService? qrCodeService = null,
         ClipboardService? clipboardService = null,
-        Func<CancellationToken, Task<IReadOnlyList<string>>>? loadTagsAsync = null)
+        Func<CancellationToken, Task<IReadOnlyList<string>>>? loadTagsAsync = null,
+        SelectionPresetStore? presetStore = null)
     {
         _snapshot = snapshot;
         _initialLocalRegion = initialLocalRegion;
@@ -101,6 +120,7 @@ public partial class CaptureOverlayWindow : Window
         _qrCodeService = qrCodeService;
         _clipboardService = clipboardService;
         _loadTagsAsync = loadTagsAsync;
+        _presetStore = presetStore;
         InitializeComponent();
         _annotationController = new CaptureAnnotationController(AnnotationLayer, snapshot, _settings);
         _annotationController.Changed += (_, _) =>
@@ -125,14 +145,19 @@ public partial class CaptureOverlayWindow : Window
         QuickTagButton.Visibility = _showActionToolbar && _settings.ShowQuickCaptureTags
             ? Visibility.Visible
             : Visibility.Collapsed;
-        if (UsesCloseButton && _showActionToolbar)
-        {
-            HintActionText.Text = "R 循环历史选区  ·  双击 / ENTER 复制  ·  ESC / × 关闭";
-        }
-
         if (!string.IsNullOrWhiteSpace(confirmationHint))
         {
             HintActionText.Text = $"R 循环历史选区  ·  {confirmationHint}";
+        }
+        else if (_showActionToolbar)
+        {
+            HintActionText.Text = UsesCloseButton
+                ? "拖动框选多个区域 · Tab 切换 · Delete 删除 · ENTER 输出 · ESC / × 关闭"
+                : "拖动框选多个区域 · Tab 切换 · Delete 删除 · ENTER 输出 · ESC 退出";
+        }
+        else if (UsesCloseButton)
+        {
+            HintActionText.Text = "R 循环历史选区  ·  双击 / ENTER 复制  ·  ESC / × 关闭";
         }
         _cornerMarks =
         [
@@ -250,10 +275,13 @@ public partial class CaptureOverlayWindow : Window
         }
 
         var point = ClampPoint(e.GetPosition(Surface));
+        var modifiers = Keyboard.Modifiers;
         var captureHit = HitTest(point);
         var isCaptureResizeHandle = captureHit is not (
             DragMode.None or DragMode.Create or DragMode.Move);
-        if (_annotationController.ActiveTool != CaptureAnnotationTool.None &&
+        var annotationAvailable = _showActionToolbar && _selections.Count == 1;
+        if (annotationAvailable &&
+            _annotationController.ActiveTool != CaptureAnnotationTool.None &&
             _selection.Contains(point) &&
             !(_annotationController.ActiveTool == CaptureAnnotationTool.Select && isCaptureResizeHandle))
         {
@@ -280,7 +308,7 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
-        if (e.ClickCount >= 2 && !_selection.IsEmpty && _selection.Contains(point))
+        if (e.ClickCount >= 2 && FindSelectionAt(point) >= 0)
         {
             ConfirmSelection();
             e.Handled = true;
@@ -292,26 +320,58 @@ public partial class CaptureOverlayWindow : Window
         _selectionPixelAtDragStart = GetLocalRegion();
         _dragMoved = false;
         _pendingSmartSelection = WpfRect.Empty;
-        if (_selection.IsEmpty && !_smartPreview.IsEmpty && _smartPreview.Contains(point))
+        _dragCreatedSelection = false;
+
+        var forceCreate = modifiers.HasFlag(ModifierKeys.Alt);
+        if (forceCreate)
         {
-            _pendingSmartSelection = _smartPreview;
-            // Adopt the preview immediately so a normal click cannot collapse into a
-            // one-pixel drag if Windows delivers a synthetic move between down/up.
-            // A deliberate drag still switches back to free-form selection below.
-            SetSelection(_pendingSmartSelection);
+            BeginNewSelection(new WpfRect(point, point));
+            _dragCreatedSelection = true;
             _dragMode = DragMode.Create;
             Surface.CaptureMouse();
             e.Handled = true;
             return;
         }
 
-        _dragMode = HitTest(point);
-
-        if (_dragMode == DragMode.Create)
+        var hitIndex = FindSelectionAt(point);
+        if (hitIndex >= 0)
         {
-            SetSelection(new WpfRect(point, point));
+            if (hitIndex != _activeSelectionIndex)
+            {
+                ActivateSelection(hitIndex);
+            }
+
+            _selectionAtDragStart = _selection;
+            _selectionPixelAtDragStart = GetLocalRegion();
+            _dragMode = HitTest(point);
+            if (_dragMode == DragMode.Create)
+            {
+                BeginNewSelection(new WpfRect(point, point));
+                _dragCreatedSelection = true;
+            }
+
+            Surface.CaptureMouse();
+            e.Handled = true;
+            return;
         }
 
+        if (!_smartPreview.IsEmpty && _smartPreview.Contains(point))
+        {
+            // Adopt the preview immediately so a normal click cannot collapse into a
+            // one-pixel drag if Windows delivers a synthetic move between down/up.
+            // A deliberate drag still switches back to free-form selection below.
+            _pendingSmartSelection = _smartPreview;
+            BeginNewSelection(_smartPreview);
+            _dragCreatedSelection = true;
+            _dragMode = DragMode.Create;
+            Surface.CaptureMouse();
+            e.Handled = true;
+            return;
+        }
+
+        BeginNewSelection(new WpfRect(point, point));
+        _dragCreatedSelection = true;
+        _dragMode = DragMode.Create;
         Surface.CaptureMouse();
         e.Handled = true;
     }
@@ -320,9 +380,19 @@ public partial class CaptureOverlayWindow : Window
     {
         var pointer = ClampPoint(e.GetPosition(Surface));
         UpdateMagnifier(pointer);
-        if (_dragMode == DragMode.None && _selection.IsEmpty && _settings.SmartWindowSelection)
+        if (_dragMode == DragMode.None &&
+            !CaptureToolbar.IsMouseOver &&
+            _settings.SmartWindowSelection &&
+            !_isAnnotating)
         {
-            UpdateSmartPreview(pointer);
+            if (FindSelectionAt(pointer) < 0)
+            {
+                UpdateSmartPreview(pointer);
+            }
+            else
+            {
+                ClearSmartPreview();
+            }
         }
 
         if (_isAnnotating)
@@ -382,23 +452,43 @@ public partial class CaptureOverlayWindow : Window
 
         if (!_pendingSmartSelection.IsEmpty && !_dragMoved)
         {
-            SetSelection(_pendingSmartSelection);
             _pendingSmartSelection = WpfRect.Empty;
             _selectionPixelAtDragStart = null;
             _dragMode = DragMode.None;
+            _dragCreatedSelection = false;
             Surface.ReleaseMouseCapture();
+            UpdateSelectionVisuals();
+            UpdateSizeBadge(_selection);
+            UpdateToolbarPosition(_selection);
+            UpdateMultiSelectionUi();
+            Surface.Cursor = CursorFor(HitTest(ClampPoint(e.GetPosition(Surface))));
             e.Handled = true;
             return;
         }
 
         ApplyDrag(ClampPoint(e.GetPosition(Surface)));
+        _pendingSmartSelection = WpfRect.Empty;
         _selectionPixelAtDragStart = null;
         _dragMode = DragMode.None;
+        _dragCreatedSelection = false;
         Surface.ReleaseMouseCapture();
 
-        if (_selection.Width < MinimumSelectionSize || _selection.Height < MinimumSelectionSize)
+        if (ActiveSelection is { } active &&
+            (active.Rect.Width < MinimumSelectionSize ||
+             active.Rect.Height < MinimumSelectionSize))
         {
-            _selection = WpfRect.Empty;
+            RemoveActiveSelection();
+        }
+        else if (ActiveSelection is not null)
+        {
+            UpdateSelectionVisuals();
+            UpdateSizeBadge(_selection);
+            UpdateToolbarPosition(_selection);
+            UpdateMultiSelectionUi();
+        }
+
+        if (_selections.Count == 0)
+        {
             ShowFullShade();
         }
 
@@ -447,6 +537,14 @@ public partial class CaptureOverlayWindow : Window
                     Surface.ActualHeight,
                     _snapshot.Bounds.Height);
                 _annotationController.NudgeSelection(deltaX, deltaY);
+                e.Handled = true;
+                return;
+            }
+
+            if (_showActionToolbar && _selections.Count > 1)
+            {
+                var pixelDistance = modifiers == ModifierKeys.Shift ? 10 : 1;
+                NudgeActiveSelection(offset.X * pixelDistance, offset.Y * pixelDistance);
                 e.Handled = true;
                 return;
             }
@@ -547,6 +645,23 @@ public partial class CaptureOverlayWindow : Window
             }
         }
 
+        if (_showActionToolbar && _selections.Count > 1 && key == Key.Tab)
+        {
+            CycleActiveSelection(
+                Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -1 : 1);
+            e.Handled = true;
+            return;
+        }
+
+        if (_showActionToolbar &&
+            _selections.Count > 0 &&
+            key is Key.Delete or Key.Back)
+        {
+            RemoveActiveSelection();
+            e.Handled = true;
+            return;
+        }
+
         if (key == Key.R && Keyboard.Modifiers == ModifierKeys.None)
         {
             RecallPreviousSelection();
@@ -589,6 +704,13 @@ public partial class CaptureOverlayWindow : Window
 
         if (key == Key.Escape)
         {
+            if (_dragMode != DragMode.None)
+            {
+                CancelActiveDrag();
+                e.Handled = true;
+                return;
+            }
+
             if (_annotationController.ActiveTool != CaptureAnnotationTool.None)
             {
                 SetAnnotationTool(CaptureAnnotationTool.None);
@@ -601,7 +723,7 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
-        if (key == Key.Enter && !_selection.IsEmpty)
+        if (key == Key.Enter && _selections.Count > 0)
         {
             ConfirmSelection();
             e.Handled = true;
@@ -707,8 +829,49 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
+        var selectionPoint = ClampPoint(e.GetPosition(Surface));
+        var selectionIndex = FindSelectionAt(selectionPoint);
+        if (selectionIndex >= 0)
+        {
+            ActivateSelection(selectionIndex);
+            ShowSelectionContextMenu();
+            e.Handled = true;
+            return;
+        }
+
         CancelSelection();
         e.Handled = true;
+    }
+
+    private void ShowSelectionContextMenu()
+    {
+        var menu = new ContextMenu
+        {
+            PlacementTarget = Surface,
+            Placement = PlacementMode.MousePoint
+        };
+        var delete = new MenuItem { Header = $"删除选区 #{_activeSelectionIndex + 1}" };
+        delete.Click += (_, _) => RemoveActiveSelection();
+        var duplicate = new MenuItem { Header = "复制选区" };
+        duplicate.Click += (_, _) => DuplicateActiveSelection();
+        var next = new MenuItem { Header = "下一个选区" };
+        next.Click += (_, _) => CycleActiveSelection(1);
+        menu.Items.Add(delete);
+        menu.Items.Add(duplicate);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(next);
+        menu.IsOpen = true;
+    }
+
+    private void DuplicateActiveSelection()
+    {
+        if (ActiveSelection is not { } item)
+        {
+            return;
+        }
+
+        var moved = CaptureFixedSizeConstraint.Move(item.Pixels, 10, 10, CapturePixelBounds);
+        BeginNewSelection(PixelsToDip(moved));
     }
 
     private void RecallPreviousSelection()
@@ -738,7 +901,63 @@ public partial class CaptureOverlayWindow : Window
         _lockedSelectionSize = null;
         UpdateFixedSizeUi();
         SetAspectRatioMode(CaptureAspectRatioMode.Free, adjustSelection: false);
-        SetSelectionFromPixels(region);
+        LoadSelectionSet(SelectionSet.Single(CaptureRegion.FromRectangle(region)));
+    }
+
+    private void LoadSelectionSet(SelectionSet set)
+    {
+        ClearSelections();
+        _annotationController.Reset();
+        foreach (var region in set.Regions.Where(region => region.IsValid))
+        {
+            var clipped = ClipToScreen(region.ToRectangle());
+            if (clipped.Width <= 0 || clipped.Height <= 0)
+            {
+                continue;
+            }
+
+            _selections.Add(CreateSelectionItem(PixelsToDip(clipped), clipped));
+        }
+
+        if (_selections.Count == 0)
+        {
+            ShowFullShade();
+            return;
+        }
+
+        _activeSelectionIndex = 0;
+        var active = _selections[0];
+        _selection = active.Rect;
+        _selectionPixelRegion = active.Pixels;
+        SetSelectionCore(active.Rect, active.Pixels);
+        UpdateMultiSelectionUi();
+    }
+
+    private DrawingRectangle ClipToScreen(DrawingRectangle region)
+    {
+        if (region.Width <= 0 || region.Height <= 0)
+        {
+            return DrawingRectangle.Empty;
+        }
+
+        var left = Math.Clamp(region.Left, 0, Math.Max(0, _snapshot.Bounds.Width - 1));
+        var top = Math.Clamp(region.Top, 0, Math.Max(0, _snapshot.Bounds.Height - 1));
+        var right = Math.Clamp(region.Right, left + 1, _snapshot.Bounds.Width);
+        var bottom = Math.Clamp(region.Bottom, top + 1, _snapshot.Bounds.Height);
+        return right > left && bottom > top
+            ? new DrawingRectangle(left, top, right - left, bottom - top)
+            : DrawingRectangle.Empty;
+    }
+
+    private WpfRect PixelsToDip(DrawingRectangle pixels)
+    {
+        var toDipX = Surface.ActualWidth / Math.Max(1, _snapshot.Bounds.Width);
+        var toDipY = Surface.ActualHeight / Math.Max(1, _snapshot.Bounds.Height);
+        return new WpfRect(
+            pixels.X * toDipX,
+            pixels.Y * toDipY,
+            pixels.Width * toDipX,
+            pixels.Height * toDipY);
     }
 
     private void ApplyDrag(Point point)
@@ -962,9 +1181,29 @@ public partial class CaptureOverlayWindow : Window
     {
         CancelQrCodeRecognition(clearResults: true);
         _smartPreview = WpfRect.Empty;
+        SmartPreviewBorder.Visibility = Visibility.Collapsed;
+
+        var item = ActiveSelection;
+        if (item is null)
+        {
+            item = CreateSelectionItem(rect, pixelRegion);
+            _selections.Add(item);
+            _activeSelectionIndex = _selections.Count - 1;
+        }
+        else
+        {
+            item.Rect = rect;
+            item.Pixels = pixelRegion;
+        }
+
         _selection = rect;
         _selectionPixelRegion = pixelRegion;
-        _annotationController.SetBounds(rect, Surface.ActualWidth, Surface.ActualHeight);
+
+        var single = _selections.Count == 1;
+        _annotationController.SetBounds(
+            single ? rect : WpfRect.Empty,
+            Surface.ActualWidth,
+            Surface.ActualHeight);
 
         SelectionBorder.Visibility = Visibility.Visible;
         Canvas.SetLeft(SelectionBorder, rect.Left);
@@ -972,12 +1211,319 @@ public partial class CaptureOverlayWindow : Window
         SelectionBorder.Width = rect.Width;
         SelectionBorder.Height = rect.Height;
 
-        UpdateShades(rect);
+        UpdateSelectionVisuals();
         UpdateCornerMarks(rect);
         UpdateSizeBadge(rect);
         UpdateToolbarPosition(rect);
+        UpdateMultiSelectionUi();
         HintBadge.Visibility = Visibility.Collapsed;
-        InvalidateOcrPrefetch();
+        if (single)
+        {
+            InvalidateOcrPrefetch();
+        }
+        else
+        {
+            CancelOcrPrefetch();
+        }
+    }
+
+    private SelectionItem CreateSelectionItem(WpfRect rect, DrawingRectangle pixelRegion)
+    {
+        var frame = new Border
+        {
+            BorderBrush = new SolidColorBrush(MediaColor.FromArgb(0xB3, 0x76, 0xDF, 0xEE)),
+            BorderThickness = new Thickness(1),
+            Background = new SolidColorBrush(MediaColor.FromArgb(0x08, 0xFF, 0xFF, 0xFF)),
+            CornerRadius = new CornerRadius(1),
+            IsHitTestVisible = false
+        };
+        var badgeText = new TextBlock
+        {
+            FontFamily = FindResource("DataFont") as System.Windows.Media.FontFamily ?? new System.Windows.Media.FontFamily("Consolas"),
+            FontSize = 10,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(MediaColor.FromRgb(0x76, 0xDF, 0xEE))
+        };
+        var badge = new Border
+        {
+            Background = new SolidColorBrush(MediaColor.FromArgb(0xEE, 0x11, 0x1A, 0x22)),
+            BorderBrush = new SolidColorBrush(MediaColor.FromArgb(0x66, 0x76, 0xDF, 0xEE)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(4, 1, 4, 1),
+            Child = badgeText,
+            IsHitTestVisible = false
+        };
+        SelectionLayer.Children.Add(frame);
+        SelectionLayer.Children.Add(badge);
+        System.Windows.Controls.Panel.SetZIndex(frame, 10);
+        System.Windows.Controls.Panel.SetZIndex(badge, 20);
+        return new SelectionItem
+        {
+            Rect = rect,
+            Pixels = pixelRegion,
+            Frame = frame,
+            Badge = badge,
+            BadgeText = badgeText
+        };
+    }
+
+    private void BeginNewSelection(WpfRect rect)
+    {
+        if (!_showActionToolbar)
+        {
+            ClearSelections();
+        }
+
+        var pixels = ToPhysicalRectangle(rect);
+        var item = CreateSelectionItem(rect, pixels);
+        _selections.Add(item);
+        _activeSelectionIndex = _selections.Count - 1;
+        _selection = rect;
+        _selectionPixelRegion = pixels;
+        SetSelectionCore(rect, pixels);
+        UpdateMultiSelectionUi();
+    }
+
+    private void ActivateSelection(int index)
+    {
+        if (index < 0 || index >= _selections.Count)
+        {
+            return;
+        }
+
+        _activeSelectionIndex = index;
+        var item = _selections[index];
+        SetSelectionCore(item.Rect, item.Pixels);
+    }
+
+    private void RemoveActiveSelection()
+    {
+        if (ActiveSelection is not { } item)
+        {
+            return;
+        }
+
+        var removedIndex = _activeSelectionIndex;
+        SelectionLayer.Children.Remove(item.Frame);
+        SelectionLayer.Children.Remove(item.Badge);
+        _selections.RemoveAt(removedIndex);
+
+        if (_selections.Count == 0)
+        {
+            ShowFullShade();
+            return;
+        }
+
+        _activeSelectionIndex = Math.Clamp(removedIndex, 0, _selections.Count - 1);
+        var next = _selections[_activeSelectionIndex];
+        _selection = next.Rect;
+        _selectionPixelRegion = next.Pixels;
+        SetSelectionCore(next.Rect, next.Pixels);
+        UpdateMultiSelectionUi();
+    }
+
+    private void ClearSelections()
+    {
+        foreach (var item in _selections)
+        {
+            SelectionLayer.Children.Remove(item.Frame);
+            SelectionLayer.Children.Remove(item.Badge);
+        }
+
+        _selections.Clear();
+        _activeSelectionIndex = -1;
+        _selection = WpfRect.Empty;
+        _selectionPixelRegion = null;
+    }
+
+    private void UpdateSelectionVisuals()
+    {
+        for (var index = 0; index < _selections.Count; index++)
+        {
+            var item = _selections[index];
+            var active = index == _activeSelectionIndex;
+            item.Frame.Visibility = active ? Visibility.Collapsed : Visibility.Visible;
+            SetPosition(item.Frame, item.Rect.Left, item.Rect.Top);
+            item.Frame.Width = Math.Max(0, item.Rect.Width);
+            item.Frame.Height = Math.Max(0, item.Rect.Height);
+            item.BadgeText.Text = (index + 1).ToString();
+            SetPosition(item.Badge, item.Rect.Left + 5, item.Rect.Top + 5);
+            item.Badge.Visibility = item.Rect.Width >= 26 && item.Rect.Height >= 20
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        UpdateShadeMask();
+    }
+
+    private void UpdateShadeMask()
+    {
+        var width = Math.Max(0, Surface.ActualWidth);
+        var height = Math.Max(0, Surface.ActualHeight);
+        if (width <= 0 || height <= 0)
+        {
+            ShadeMask.Data = null;
+            return;
+        }
+
+        Geometry? holes = null;
+        foreach (var item in _selections)
+        {
+            if (item.Rect.IsEmpty)
+            {
+                continue;
+            }
+
+            var geometry = new RectangleGeometry(item.Rect);
+            geometry.Freeze();
+            holes = holes is null
+                ? (Geometry)geometry
+                : Geometry.Combine(holes, geometry, GeometryCombineMode.Union, null);
+        }
+
+        if (!_smartPreview.IsEmpty)
+        {
+            var preview = new RectangleGeometry(_smartPreview);
+            preview.Freeze();
+            holes = holes is null
+                ? (Geometry)preview
+                : Geometry.Combine(holes, preview, GeometryCombineMode.Union, null);
+        }
+
+        var full = new RectangleGeometry(new WpfRect(0, 0, width, height));
+        full.Freeze();
+        var mask = holes is null
+            ? (Geometry)full
+            : Geometry.Combine(full, holes, GeometryCombineMode.Exclude, null);
+        mask.Freeze();
+        ShadeMask.Data = mask;
+    }
+
+    private int FindSelectionAt(Point point)
+    {
+        if (_activeSelectionIndex >= 0 && _activeSelectionIndex < _selections.Count)
+        {
+            var activeBounds = _selections[_activeSelectionIndex].Rect;
+            activeBounds.Inflate(HitPadding, HitPadding);
+            if (activeBounds.Contains(point))
+            {
+                return _activeSelectionIndex;
+            }
+        }
+
+        for (var index = _selections.Count - 1; index >= 0; index--)
+        {
+            if (index == _activeSelectionIndex)
+            {
+                continue;
+            }
+
+            var bounds = _selections[index].Rect;
+            bounds.Inflate(HitPadding, HitPadding);
+            if (bounds.Contains(point))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private void NudgeActiveSelection(int offsetX, int offsetY)
+    {
+        if (GetLocalRegion() is not { } current)
+        {
+            return;
+        }
+
+        var moved = CaptureFixedSizeConstraint.Move(current, offsetX, offsetY, CapturePixelBounds);
+        SetSelectionFromPixels(moved);
+    }
+
+    private void CycleActiveSelection(int direction)
+    {
+        if (_selections.Count <= 1)
+        {
+            return;
+        }
+
+        var next = (_activeSelectionIndex + direction + _selections.Count) % _selections.Count;
+        ActivateSelection(next);
+        ShowAdjustmentBadge(Mouse.GetPosition(Root), $"选区 {next + 1}/{_selections.Count}");
+    }
+
+    private void CancelActiveDrag()
+    {
+        if (_dragMode == DragMode.None)
+        {
+            return;
+        }
+
+        if (_dragCreatedSelection)
+        {
+            RemoveActiveSelection();
+        }
+        else if (ActiveSelection is { } active && _selectionPixelAtDragStart is { } originalPixels)
+        {
+            active.Rect = _selectionAtDragStart;
+            active.Pixels = originalPixels;
+            _selection = active.Rect;
+            _selectionPixelRegion = active.Pixels;
+            SetSelectionCore(active.Rect, active.Pixels);
+        }
+
+        _dragMode = DragMode.None;
+        _dragCreatedSelection = false;
+        _pendingSmartSelection = WpfRect.Empty;
+        _selectionPixelAtDragStart = null;
+        Surface.ReleaseMouseCapture();
+
+        if (_selections.Count == 0)
+        {
+            ShowFullShade();
+        }
+        else
+        {
+            UpdateSelectionVisuals();
+            UpdateSizeBadge(_selection);
+            UpdateToolbarPosition(_selection);
+            UpdateMultiSelectionUi();
+        }
+    }
+
+    private void UpdateMultiSelectionUi()
+    {
+        var multi = _selections.Count > 1;
+        WpfButton[] annotationButtons =
+        [
+            PenButton,
+            LineButton,
+            ArrowButton,
+            RectangleButton,
+            EllipseButton,
+            TextButton,
+            NumberButton,
+            SelectButton
+        ];
+        foreach (var button in annotationButtons)
+        {
+            button.IsEnabled = !multi;
+        }
+
+        OcrButton.IsEnabled = !multi;
+        PinButton.IsEnabled = !multi;
+        LongCaptureButton.IsEnabled = !multi;
+        SavePresetButton.IsEnabled = _selections.Count > 0;
+        SavePresetButton.Visibility = _showActionToolbar && _selections.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        if (multi && _annotationController.ActiveTool != CaptureAnnotationTool.None)
+        {
+            SetAnnotationTool(CaptureAnnotationTool.None);
+            _annotationController.SetBounds(WpfRect.Empty, Surface.ActualWidth, Surface.ActualHeight);
+        }
     }
 
     private void UpdateSmartPreview(Point point)
@@ -1025,13 +1571,13 @@ public partial class CaptureOverlayWindow : Window
 
     private void ShowSmartPreview(WpfRect rect)
     {
-        SelectionBorder.Visibility = Visibility.Visible;
-        Canvas.SetLeft(SelectionBorder, rect.Left);
-        Canvas.SetTop(SelectionBorder, rect.Top);
-        SelectionBorder.Width = rect.Width;
-        SelectionBorder.Height = rect.Height;
-        UpdateShades(rect);
-        UpdateSizeBadge(rect);
+        _smartPreview = rect;
+        SmartPreviewBorder.Visibility = Visibility.Visible;
+        SetPosition(SmartPreviewBorder, rect.Left, rect.Top);
+        SmartPreviewBorder.Width = rect.Width;
+        SmartPreviewBorder.Height = rect.Height;
+        UpdateShadeMask();
+        UpdateSizeBadge(rect, CaptureRegion.FromRectangle(ToPhysicalRectangle(rect)), isPreview: true);
         CaptureToolbar.Visibility = Visibility.Collapsed;
         QuickTagButton.Visibility = Visibility.Collapsed;
         QuickTagPopup.IsOpen = false;
@@ -1044,19 +1590,26 @@ public partial class CaptureOverlayWindow : Window
 
     private void ClearSmartPreview()
     {
-        if (_smartPreview.IsEmpty || !_selection.IsEmpty)
+        if (_smartPreview.IsEmpty)
         {
             return;
         }
 
         _smartPreview = WpfRect.Empty;
-        SelectionBorder.Visibility = Visibility.Collapsed;
-        SizeBadge.Visibility = Visibility.Collapsed;
-        HintBadge.Visibility = Visibility.Visible;
-        SetRectangle(TopShade, 0, 0, Surface.ActualWidth, Surface.ActualHeight);
-        SetRectangle(LeftShade, 0, 0, 0, 0);
-        SetRectangle(RightShade, 0, 0, 0, 0);
-        SetRectangle(BottomShade, 0, 0, 0, 0);
+        SmartPreviewBorder.Visibility = Visibility.Collapsed;
+        UpdateShadeMask();
+        if (ActiveSelection is not null)
+        {
+            UpdateToolbarPosition(_selection);
+            UpdateSizeBadge(_selection);
+            UpdateCornerMarks(_selection);
+            HintBadge.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            SizeBadge.Visibility = Visibility.Collapsed;
+            HintBadge.Visibility = Visibility.Visible;
+        }
     }
 
     private void UpdateMagnifier(Point point)
@@ -1118,37 +1671,29 @@ public partial class CaptureOverlayWindow : Window
         MagnifierOverlay.Visibility = Visibility.Visible;
     }
 
-    private void UpdateShades(WpfRect rect)
-    {
-        SetRectangle(TopShade, 0, 0, Surface.ActualWidth, rect.Top);
-        SetRectangle(BottomShade, 0, rect.Bottom, Surface.ActualWidth, Surface.ActualHeight - rect.Bottom);
-        SetRectangle(LeftShade, 0, rect.Top, rect.Left, rect.Height);
-        SetRectangle(RightShade, rect.Right, rect.Top, Surface.ActualWidth - rect.Right, rect.Height);
-    }
-
     private void ShowFullShade()
     {
         _annotationController.Reset();
         _annotationController.SetBounds(WpfRect.Empty, Surface.ActualWidth, Surface.ActualHeight);
-        _selection = WpfRect.Empty;
-        _selectionPixelRegion = null;
+        ClearSelections();
+        _smartPreview = WpfRect.Empty;
         _lockedSelectionSize = null;
         UpdateFixedSizeUi();
         SelectionBorder.Visibility = Visibility.Collapsed;
+        SmartPreviewBorder.Visibility = Visibility.Collapsed;
         SizeBadge.Visibility = Visibility.Collapsed;
         CaptureToolbar.Visibility = Visibility.Collapsed;
         QuickTagButton.Visibility = Visibility.Collapsed;
         QuickTagPopup.IsOpen = false;
         HintBadge.Visibility = Visibility.Visible;
-        SetRectangle(TopShade, 0, 0, Surface.ActualWidth, Surface.ActualHeight);
-        SetRectangle(LeftShade, 0, 0, 0, 0);
-        SetRectangle(RightShade, 0, 0, 0, 0);
-        SetRectangle(BottomShade, 0, 0, 0, 0);
 
         foreach (var mark in _cornerMarks)
         {
             mark.Visibility = Visibility.Collapsed;
         }
+
+        UpdateShadeMask();
+        UpdateMultiSelectionUi();
     }
 
     private void UpdateCornerMarks(WpfRect rect)
@@ -1175,12 +1720,24 @@ public partial class CaptureOverlayWindow : Window
         SetPosition(BottomRightVertical, rect.Right - 2, rect.Bottom - 15);
     }
 
-    private void UpdateSizeBadge(WpfRect rect)
+    private void UpdateSizeBadge(
+        WpfRect rect,
+        CaptureRegion? physicalOverride = null,
+        bool isPreview = false)
     {
-        var physical = _selectionPixelRegion ?? ToPhysicalRectangle(rect);
+        var physical = physicalOverride
+            ?? (_selectionPixelRegion is { } pixels
+                ? CaptureRegion.FromRectangle(pixels)
+                : CaptureRegion.FromRectangle(ToPhysicalRectangle(rect)));
         var physicalWidth = physical.Width;
         var physicalHeight = physical.Height;
-        SizeText.Text = $"{physicalWidth} × {physicalHeight} px";
+        var count = _selections.Count;
+        var activeNumber = _activeSelectionIndex + 1;
+        SizeText.Text = isPreview
+            ? $"{physicalWidth} × {physicalHeight} px"
+            : count > 1
+                ? $"#{activeNumber}/{count} · {physicalWidth} × {physicalHeight} px"
+                : $"{physicalWidth} × {physicalHeight} px";
         var constraintLabel = _lockedSelectionSize is not null
             ? _aspectRatioMode == CaptureAspectRatioMode.Free
                 ? "固定"
@@ -1188,9 +1745,13 @@ public partial class CaptureOverlayWindow : Window
             : _aspectRatioMode == CaptureAspectRatioMode.Free
                 ? null
                 : AspectRatioLabel(_aspectRatioMode);
-        ToolbarSizeText.Text = constraintLabel is null
+        ToolbarSizeText.Text = isPreview
             ? $"{physicalWidth} × {physicalHeight}"
-            : $"{physicalWidth} × {physicalHeight}  ·  {constraintLabel}";
+            : count > 1
+                ? $"{count} 个选区 · {physicalWidth} × {physicalHeight}"
+                : constraintLabel is null
+                    ? $"{physicalWidth} × {physicalHeight}"
+                    : $"{physicalWidth} × {physicalHeight}  ·  {constraintLabel}";
         SizeBadge.Visibility = Visibility.Visible;
         SizeBadge.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
 
@@ -1220,11 +1781,15 @@ public partial class CaptureOverlayWindow : Window
         {
             CaptureToolbar.Visibility = Visibility.Collapsed;
             QuickTagButton.Visibility = Visibility.Collapsed;
+            SavePresetButton.Visibility = Visibility.Collapsed;
             QuickTagPopup.IsOpen = false;
             return;
         }
 
         QuickTagButton.Visibility = _settings.ShowQuickCaptureTags
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        SavePresetButton.Visibility = _selections.Count > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
         if (!_settings.ShowQuickCaptureTags)
@@ -1252,7 +1817,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void ConfirmSelection()
     {
-        if (_selection.IsEmpty)
+        if (_selections.Count == 0)
         {
             return;
         }
@@ -1271,20 +1836,30 @@ public partial class CaptureOverlayWindow : Window
 
     private void RequestAction(CaptureOverlayAction action)
     {
-        var localRegion = GetLocalRegion();
-        if (localRegion is null)
+        var output = CreateSelectionOutput();
+        if (output is null)
+        {
+            return;
+        }
+
+        if (!output.IsSingle &&
+            (action is CaptureOverlayAction.Ocr or
+                CaptureOverlayAction.QrCode or
+                CaptureOverlayAction.Pin or
+                CaptureOverlayAction.AutomaticLongCapture))
         {
             return;
         }
 
         QuickTagPopup.IsOpen = false;
-        var usePrefetch = action is CaptureOverlayAction.Ocr or
-                                      CaptureOverlayAction.Pin or
-                                      CaptureOverlayAction.Copy or
-                                      CaptureOverlayAction.Confirm &&
+        var usePrefetch = output.IsSingle &&
+                          (action is CaptureOverlayAction.Ocr or
+                              CaptureOverlayAction.Pin or
+                              CaptureOverlayAction.Copy or
+                              CaptureOverlayAction.Confirm) &&
                           _prefetchedOcrImage is not null &&
                           _prefetchedOcrTask is not null;
-        var image = usePrefetch ? _prefetchedOcrImage! : CreateSelectedImage();
+        var image = usePrefetch ? _prefetchedOcrImage! : output.PrimaryImage;
         var prefetchedOcr = usePrefetch ? _prefetchedOcrTask : null;
         if (usePrefetch)
         {
@@ -1309,8 +1884,7 @@ public partial class CaptureOverlayWindow : Window
             this,
             new CaptureOverlayActionEventArgs(
                 action,
-                localRegion.Value,
-                image,
+                output,
                 prefetchedOcr,
                 SelectedTags));
     }
@@ -1388,15 +1962,15 @@ public partial class CaptureOverlayWindow : Window
 
         UIElement[] hiddenElements =
         [
-            TopShade,
-            LeftShade,
-            RightShade,
-            BottomShade,
+            ShadeMask,
+            SelectionLayer,
+            SmartPreviewBorder,
             SelectionBorder,
             SizeBadge,
             HintBadge,
             CaptureToolbar,
             QuickTagButton,
+            SavePresetButton,
             AdjustmentBadge,
             MagnifierOverlay,
             GeometryEditor,
@@ -1450,6 +2024,77 @@ public partial class CaptureOverlayWindow : Window
         }
 
         return _selectionPixelRegion ?? ToPhysicalRectangle(_selection);
+    }
+
+    public CaptureSelectionOutput? CreateSelectionOutput()
+    {
+        var regions = _selections
+            .Where(item => item.Pixels.Width > 0 && item.Pixels.Height > 0)
+            .Select(item => CaptureRegion.FromRectangle(item.Pixels))
+            .ToArray();
+        if (regions.Length == 0)
+        {
+            return null;
+        }
+
+        if (regions.Length == 1 && _activeSelectionIndex != 0)
+        {
+            ActivateSelection(0);
+        }
+
+        var padding = Math.Clamp(_settings.MultiRegionPadding, 0, 200);
+        if (regions.Length == 1)
+        {
+            var image = CreateSelectedImage();
+            var box = SelectionImageComposer.GetBoundingBox(regions, padding, CapturePixelBounds);
+            var left = box.IsValid ? regions[0].X - box.X : padding;
+            var top = box.IsValid ? regions[0].Y - box.Y : padding;
+            var right = box.IsValid
+                ? box.X + box.Width - (regions[0].X + regions[0].Width)
+                : padding;
+            var bottom = box.IsValid
+                ? box.Y + box.Height - (regions[0].Y + regions[0].Height)
+                : padding;
+            var composite = SelectionImageComposer.AddTransparentPadding(
+                image,
+                left,
+                top,
+                right,
+                bottom);
+            return new CaptureSelectionOutput(
+                [image],
+                regions,
+                composite,
+                box.IsValid ? box : null);
+        }
+
+        var images = regions
+            .Select(region => SelectionImageComposer.Crop(_snapshot.Image, region))
+            .ToArray();
+        var multiComposite = SelectionImageComposer.CreateTransparentComposite(
+            _snapshot.Image,
+            regions,
+            padding);
+        var multiBox = SelectionImageComposer.GetBoundingBox(regions, padding, CapturePixelBounds);
+        return new CaptureSelectionOutput(
+            images,
+            regions,
+            multiComposite,
+            multiBox.IsValid ? multiBox : null);
+    }
+
+    public SelectionSet? CreateSelectionSet()
+    {
+        var regions = _selections
+            .Where(item => item.Pixels.Width > 0 && item.Pixels.Height > 0)
+            .Select(item => CaptureRegion.FromRectangle(item.Pixels))
+            .ToArray();
+        return regions.Length == 0
+            ? null
+            : new SelectionSet(
+                QingSnap.App.Models.SelectionMode.Free,
+                regions,
+                Padding: Math.Clamp(_settings.MultiRegionPadding, 0, 200));
     }
 
     private DrawingRectangle ToPhysicalRectangle(WpfRect rect)
@@ -2217,6 +2862,20 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnCloseCaptureClick(object sender, RoutedEventArgs e) => CancelSelection();
 
+    private void OnSavePresetClick(object sender, RoutedEventArgs e)
+    {
+        if (_presetStore is null || CreateSelectionSet() is not { } selection)
+        {
+            return;
+        }
+
+        var name = $"选区 {_presetStore.LoadAll().Count + 1}";
+        var preset = _presetStore.Add(name, selection);
+        ShowAdjustmentBadge(
+            Mouse.GetPosition(Root),
+            $"已保存命名选区：{preset.Name}（可在管理窗口重命名）");
+    }
+
     private void OnToolbarSizeMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         var region = GetLocalRegion();
@@ -2584,13 +3243,6 @@ public partial class CaptureOverlayWindow : Window
         DragMode.TopRight or DragMode.BottomLeft => WpfCursors.SizeNESW,
         _ => WpfCursors.Cross
     };
-
-    private static void SetRectangle(Rectangle rectangle, double left, double top, double width, double height)
-    {
-        SetPosition(rectangle, left, top);
-        rectangle.Width = Math.Max(0, width);
-        rectangle.Height = Math.Max(0, height);
-    }
 
     private static void SetPosition(FrameworkElement element, double left, double top)
     {

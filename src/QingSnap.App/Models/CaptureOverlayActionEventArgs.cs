@@ -7,23 +7,31 @@ public sealed class CaptureOverlayActionEventArgs : EventArgs
 {
     public CaptureOverlayActionEventArgs(
         CaptureOverlayAction action,
-        DrawingRectangle localRegion,
-        BitmapSource image,
+        CaptureSelectionOutput output,
         Task<OcrRecognitionResult>? prefetchedOcr = null,
         IReadOnlyList<string>? tags = null)
     {
         Action = action;
-        LocalRegion = localRegion;
-        Image = image;
+        Output = output;
         PrefetchedOcr = prefetchedOcr;
         Tags = tags ?? [];
     }
 
     public CaptureOverlayAction Action { get; }
 
-    public DrawingRectangle LocalRegion { get; }
+    public CaptureSelectionOutput Output { get; }
 
-    public BitmapSource Image { get; }
+    public IReadOnlyList<CaptureRegion> Regions => Output.Regions;
+
+    public IReadOnlyList<BitmapSource> Images => Output.Images;
+
+    public BitmapSource? CompositeImage => Output.CompositeImage;
+
+    public CaptureRegion? CompositeRegion => Output.CompositeRegion;
+
+    public DrawingRectangle LocalRegion => Output.PrimaryRegion.ToRectangle();
+
+    public BitmapSource Image => Output.PrimaryImage;
 
     public Task<OcrRecognitionResult>? PrefetchedOcr { get; }
 

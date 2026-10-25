@@ -108,10 +108,21 @@ internal static class SelectionImageComposer
         return result;
     }
 
-    public static BitmapSource AddTransparentPadding(BitmapSource image, int padding)
+    public static BitmapSource AddTransparentPadding(BitmapSource image, int padding) =>
+        AddTransparentPadding(image, padding, padding, padding, padding);
+
+    public static BitmapSource AddTransparentPadding(
+        BitmapSource image,
+        int left,
+        int top,
+        int right,
+        int bottom)
     {
-        var safePadding = Math.Clamp(padding, 0, 200);
-        if (safePadding == 0)
+        left = Math.Clamp(left, 0, 200);
+        top = Math.Clamp(top, 0, 200);
+        right = Math.Clamp(right, 0, 200);
+        bottom = Math.Clamp(bottom, 0, 200);
+        if (left == 0 && top == 0 && right == 0 && bottom == 0)
         {
             return image;
         }
@@ -121,8 +132,8 @@ internal static class SelectionImageComposer
         var sourcePixels = new byte[sourceStride * formatted.PixelHeight];
         formatted.CopyPixels(sourcePixels, sourceStride, 0);
 
-        var width = formatted.PixelWidth + (safePadding * 2);
-        var height = formatted.PixelHeight + (safePadding * 2);
+        var width = formatted.PixelWidth + left + right;
+        var height = formatted.PixelHeight + top + bottom;
         var stride = width * 4;
         var destination = new byte[stride * height];
         for (var row = 0; row < formatted.PixelHeight; row++)
@@ -131,7 +142,7 @@ internal static class SelectionImageComposer
                 sourcePixels,
                 row * sourceStride,
                 destination,
-                ((row + safePadding) * stride) + (safePadding * 4),
+                ((row + top) * stride) + (left * 4),
                 sourceStride);
         }
 

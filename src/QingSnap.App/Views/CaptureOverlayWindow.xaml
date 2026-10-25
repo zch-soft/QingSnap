@@ -305,10 +305,7 @@
                 MouseLeftButtonDown="OnMouseLeftButtonDown"
                 MouseMove="OnMouseMove"
                 MouseLeftButtonUp="OnMouseLeftButtonUp">
-            <Rectangle x:Name="TopShade" Fill="#A8090E14" IsHitTestVisible="False" />
-            <Rectangle x:Name="LeftShade" Fill="#A8090E14" IsHitTestVisible="False" />
-            <Rectangle x:Name="RightShade" Fill="#A8090E14" IsHitTestVisible="False" />
-            <Rectangle x:Name="BottomShade" Fill="#A8090E14" IsHitTestVisible="False" />
+            <Path x:Name="ShadeMask" Fill="#A8090E14" IsHitTestVisible="False" />
 
             <Canvas x:Name="AnnotationLayer"
                     Visibility="Collapsed"
@@ -327,6 +324,16 @@
                     <DropShadowEffect Color="#FF76DFEE" BlurRadius="8" ShadowDepth="0" Opacity="0.55" />
                 </Border.Effect>
             </Border>
+
+            <Canvas x:Name="SelectionLayer" IsHitTestVisible="False" />
+
+            <Border x:Name="SmartPreviewBorder"
+                    Visibility="Collapsed"
+                    BorderBrush="#FF76DFEE"
+                    BorderThickness="1"
+                    Background="#06FFFFFF"
+                    CornerRadius="1"
+                    IsHitTestVisible="False" />
 
             <icons:QrCodeHotspotLayer x:Name="QrCodeHotspotLayer"
                                       Panel.ZIndex="18" />
@@ -543,7 +550,8 @@
                             <icons:QingSnapIcon Kind="Clear" />
                         </Button>
                         <Border Width="1" Height="22" Margin="5,7" Background="#3DFFFFFF" />
-                        <Button Style="{StaticResource CaptureFeatureButton}"
+                        <Button x:Name="LongCaptureButton"
+                                Style="{StaticResource CaptureFeatureButton}"
                                 Width="34"
                                 ToolTip="自动滚动长截图"
                                 AutomationProperties.Name="自动滚动长截图"
@@ -613,12 +621,25 @@
                                 </Border>
                             </Grid>
                         </Button>
-                        <Button Style="{StaticResource CaptureToolButton}"
+                        <Button x:Name="PinButton"
+                                Style="{StaticResource CaptureToolButton}"
                                 Width="34"
                                 ToolTip="把选区钉到桌面"
                                 AutomationProperties.Name="把选区钉到桌面"
                                 Click="OnPinClick">
                             <icons:QingSnapIcon Kind="Pin" />
+                        </Button>
+                        <Button x:Name="SavePresetButton"
+                                Style="{StaticResource CaptureToolButton}"
+                                Width="30" MinWidth="30"
+                                Padding="6,0"
+                                ToolTip="保存当前选区为命名选区"
+                                AutomationProperties.Name="保存当前选区为命名选区"
+                                Click="OnSavePresetClick">
+                            <TextBlock Text="★"
+                                       FontFamily="Segoe UI Symbol"
+                                       FontSize="14"
+                                       Foreground="#FFFFD054" />
                         </Button>
                         <Button Style="{StaticResource CaptureConfirmButton}"
                                 Width="40"

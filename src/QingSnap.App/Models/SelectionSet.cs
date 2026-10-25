@@ -33,7 +33,8 @@ public sealed record SelectionSet(
     public static SelectionSet Single(CaptureRegion region) =>
         new(SelectionMode.Free, [region]);
 
-    public bool IsSingle => Regions.Count == 1;
+    public bool IsSingle => Regions is { Count: 1 };
 
-    public bool HasSelection => Regions.Any(region => region.IsValid);
+    public bool HasSelection =>
+        Regions is { Count: > 0 } && Regions.Any(region => region.IsValid);
 }
