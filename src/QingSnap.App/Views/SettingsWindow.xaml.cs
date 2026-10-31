@@ -361,7 +361,9 @@ public partial class SettingsWindow : Window
         }
 
         ShortcutStatusText.Text = _integrationService.IsStartMenuEntryPresent
-            ? "已创建；开始菜单与“应用和功能”中可见"
+            ? _integrationService.IsRegisteredForUninstall
+                ? "已创建；开始菜单与“应用和功能”中可见"
+                : "开始菜单已存在；尚未登记卸载入口，点击“创建”可补全"
             : _integrationService.IsRegisteredForUninstall
                 ? "开始菜单快捷方式缺失，但仍有卸载登记"
                 : "未创建";
