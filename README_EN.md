@@ -113,11 +113,11 @@ Automatic/manual scrolling capture, OCR latest capture, History, and pause/resum
 
 ## Data and privacy
 
-- History defaults to `%LOCALAPPDATA%\QingSnap\History`.
-- OCR runtimes and models are stored under `%LOCALAPPDATA%\QingSnap\Ocr`.
+- The release package ships with `portable.flag`, so configuration, the metadata database, capture history, and OCR runtimes/models are stored in `Data\` beside `QingSnap.exe`.
+- Remove `portable.flag` to use the standard mode, where data is stored under `%LOCALAPPDATA%\QingSnap`.
+- Extract the portable package to a writable folder; otherwise the app cannot create `Data\`.
 - Captures, OCR images, recognized text, and QR contents are never uploaded to third parties.
 - Network access is used only for user-initiated OCR downloads, update checks, and release downloads.
-- `portable.flag` keeps configuration, the metadata database, and related data beside the portable app.
 
 ## Build from source
 

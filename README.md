@@ -127,11 +127,11 @@ QingSnap 是一款面向 Windows 10/11 的轻量截图工具。它把智能截�
 
 ## 数据与隐私
 
-- 截图历史默认位于 `%LOCALAPPDATA%\QingSnap\History`。
-- OCR 运行库和模型位于 `%LOCALAPPDATA%\QingSnap\Ocr`。
+- 发布包内置 `portable.flag`，配置、数据库、截图历史和 OCR 运行库/模型默认保存在程序目录下的 `Data\`。
+- 删除 `portable.flag` 后回到标准模式，数据存放在 `%LOCALAPPDATA%\QingSnap`。
+- 便携包请解压到有写权限的文件夹，否则程序无法创建 `Data\`。
 - 截图、OCR 图片、识别文字和二维码内容不会上传到第三方服务。
 - 网络只用于用户主动下载 OCR 组件、检查更新或下载 Release。
-- `portable.flag` 模式下配置、数据库与相关数据跟随便携目录。
 - 反馈包由用户主动生成，可先检查内容；日志不包含截图、剪贴板图片或 OCR 正文。
 
 ## 系统要求
