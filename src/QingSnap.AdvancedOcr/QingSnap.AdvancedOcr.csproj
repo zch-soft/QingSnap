@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
+    <ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>None</ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
     <AssemblyName>QingSnap.AdvancedOcr</AssemblyName>
     <RootNamespace>QingSnap.AdvancedOcr</RootNamespace>
     <Version>1.0.0</Version>
