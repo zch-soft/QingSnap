@@ -15,12 +15,16 @@ public partial class MainWindow : Window
     private readonly HistoryOcrIndexingService _historyOcrIndexer;
     private readonly ClipboardService _clipboardService;
     private readonly UpdateService _updateService;
+    private readonly SystemIntegrationService _integrationService;
+    private readonly UninstallService _uninstallService;
     private GlobalHotkeyService? _hotkeys;
     private IReadOnlyList<HotkeyRegistrationFailure> _hotkeyRegistrationFailures = [];
     private bool _hotkeysSuspended;
     private TrayIconService? _tray;
     private SettingsWindow? _settingsWindow;
     private FirstRunTutorialWindow? _tutorialWindow;
+    private bool _servicesDisposed;
+    private bool _uninstallInProgress;
 
     public MainWindow()
     {
@@ -28,6 +32,8 @@ public partial class MainWindow : Window
 
         _settingsService = new AppSettingsService();
         _updateService = new UpdateService(_settingsService.DataDirectory);
+        _integrationService = new SystemIntegrationService();
+        _uninstallService = new UninstallService();
         var captureService = new ScreenCaptureService();
         _clipboardService = new ClipboardService();
         var stateStore = new AppStateStore();
@@ -92,7 +98,10 @@ public partial class MainWindow : Window
             _updateService,
             () => OpenTutorialWindow(markCompletedOnClose: false),
             () => _hotkeyRegistrationFailures,
-            SetHotkeyCaptureMode);
+            SetHotkeyCaptureMode,
+            _integrationService,
+            _uninstallService,
+            RequestUninstallAsync);
         _settingsWindow.Closed += (_, _) => _settingsWindow = null;
         _settingsWindow.Show();
     }
@@ -347,15 +356,49 @@ public partial class MainWindow : Window
         System.Windows.Application.Current.Shutdown();
     }
 
-    private void OnClosed(object? sender, EventArgs e)
+    internal async Task RequestUninstallAsync(UninstallOptions options)
     {
+        if (_uninstallInProgress)
+        {
+            return;
+        }
+
+        _uninstallInProgress = true;
+        _settingsWindow?.Close();
+        _settingsService.SettingsChanged -= OnSettingsChanged;
+        DisposeOwnedServices();
+
+        var result = await Task.Run(() => UninstallRunner.Run(
+            options,
+            _settingsService,
+            _integrationService,
+            _uninstallService));
+        UninstallRunner.ShowSummary(result);
+        System.Windows.Application.Current.Shutdown();
+    }
+
+    private void DisposeOwnedServices()
+    {
+        if (_servicesDisposed)
+        {
+            return;
+        }
+
+        _servicesDisposed = true;
         _tray?.Dispose();
+        _tray = null;
         _hotkeys?.Dispose();
+        _hotkeys = null;
         _historyOcrIndexer.Dispose();
         _historyService.Dispose();
         _ocrService.Dispose();
         _updateService.Dispose();
         _clipboardService.Dispose();
+    }
+
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        DisposeOwnedServices();
         _settingsService.SettingsChanged -= OnSettingsChanged;
     }
 }

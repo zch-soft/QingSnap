@@ -34,7 +34,7 @@ public sealed class AppSettingsService
         var temporaryPath = _settingsPath + ".tmp";
         File.WriteAllText(temporaryPath, JsonSerializer.Serialize(normalized, JsonOptions));
         File.Move(temporaryPath, _settingsPath, true);
-        ApplyStartupSetting(normalized.StartWithWindows);
+        SystemIntegrationService.ApplyStartWithWindows(normalized.StartWithWindows);
         Current = normalized;
         SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -213,27 +213,6 @@ public sealed class AppSettingsService
         }
 
         return "#FFFF4E5B";
-    }
-
-    private static void ApplyStartupSetting(bool enabled)
-    {
-        var startupDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-        Directory.CreateDirectory(startupDirectory);
-        var launcherPath = Path.Combine(startupDirectory, "QingSnap.cmd");
-        if (enabled)
-        {
-            var executablePath = Environment.ProcessPath ?? throw new InvalidOperationException("无法确定 QingSnap 程序路径。");
-            File.WriteAllText(
-                launcherPath,
-                $"@echo off{Environment.NewLine}start \"\" \"{executablePath}\"{Environment.NewLine}");
-        }
-        else
-        {
-            if (File.Exists(launcherPath))
-            {
-                File.Delete(launcherPath);
-            }
-        }
     }
 
     private static string ResolveDataDirectory() =>

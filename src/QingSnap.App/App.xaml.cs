@@ -2,6 +2,8 @@ using System.Windows;
 using System.IO;
 using System.Windows.Threading;
 using QingSnap.App.Services;
+using QingSnap.App.Views;
+using MessageBox = System.Windows.MessageBox;
 
 namespace QingSnap.App;
 
@@ -32,12 +34,29 @@ public partial class App : System.Windows.Application
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
         base.OnStartup(e);
 
+        var uninstallRequested = e.Args.Any(argument =>
+            argument.Equals("--uninstall", StringComparison.OrdinalIgnoreCase));
         _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out var isFirstInstance);
         _ownsSingleInstanceMutex = isFirstInstance;
         if (!isFirstInstance)
         {
             DiagnosticLog.Info("Application", "A second instance was rejected.");
+            if (uninstallRequested)
+            {
+                MessageBox.Show(
+                    "QingSnap 正在运行，请先从托盘菜单退出 QingSnap，再重试卸载。",
+                    "QingSnap",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+
             Shutdown();
+            return;
+        }
+
+        if (uninstallRequested)
+        {
+            RunUninstall();
             return;
         }
 
@@ -82,6 +101,45 @@ public partial class App : System.Windows.Application
         else if (e.Args.Any(argument => argument.Equals("--long-capture", StringComparison.OrdinalIgnoreCase)))
         {
             Dispatcher.BeginInvoke(_hostWindow.StartLongCapture);
+        }
+    }
+
+    private void RunUninstall()
+    {
+        try
+        {
+            var settingsService = new AppSettingsService();
+            var integrationService = new SystemIntegrationService();
+            var uninstallService = new UninstallService();
+            var dialog = new UninstallWindow(
+                uninstallService.Describe(settingsService.Current, settingsService.DataDirectory))
+            {
+                WindowStartupLocation = WindowStartupLocation.CenterScreen
+            };
+            if (dialog.ShowDialog() != true || dialog.Options is not { } options)
+            {
+                return;
+            }
+
+            var result = UninstallRunner.Run(
+                options,
+                settingsService,
+                integrationService,
+                uninstallService);
+            UninstallRunner.ShowSummary(result);
+        }
+        catch (Exception exception)
+        {
+            DiagnosticLog.Error("Uninstall", exception, "Headless uninstall failed.");
+            MessageBox.Show(
+                $"卸载失败：{exception.Message}",
+                "QingSnap",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        finally
+        {
+            Shutdown();
         }
     }
 

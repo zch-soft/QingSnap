@@ -22,6 +22,9 @@ public partial class SettingsWindow : Window
     private readonly Action _openTutorial;
     private readonly Func<IReadOnlyList<HotkeyRegistrationFailure>> _getHotkeyRegistrationFailures;
     private readonly Action<bool> _setHotkeyCaptureMode;
+    private readonly SystemIntegrationService _integrationService;
+    private readonly UninstallService _uninstallService;
+    private readonly Func<UninstallOptions, Task> _requestUninstall;
     private bool _isCapturingHotkey;
     private CancellationTokenSource? _ocrOperationCancellation;
     private CancellationTokenSource? _updateOperationCancellation;
@@ -34,7 +37,10 @@ public partial class SettingsWindow : Window
         UpdateService updateService,
         Action openTutorial,
         Func<IReadOnlyList<HotkeyRegistrationFailure>> getHotkeyRegistrationFailures,
-        Action<bool> setHotkeyCaptureMode)
+        Action<bool> setHotkeyCaptureMode,
+        SystemIntegrationService integrationService,
+        UninstallService uninstallService,
+        Func<UninstallOptions, Task> requestUninstall)
     {
         _settingsService = settingsService;
         _ocrService = ocrService;
@@ -42,6 +48,9 @@ public partial class SettingsWindow : Window
         _openTutorial = openTutorial;
         _getHotkeyRegistrationFailures = getHotkeyRegistrationFailures;
         _setHotkeyCaptureMode = setHotkeyCaptureMode;
+        _integrationService = integrationService;
+        _uninstallService = uninstallService;
+        _requestUninstall = requestUninstall;
         var bindings = settingsService.Current.Hotkeys.ToDictionary(binding => binding.Action);
         HotkeyRows = new ObservableCollection<HotkeySettingRow>(
             HotkeyCatalog.Definitions.Select(definition =>
@@ -57,6 +66,7 @@ public partial class SettingsWindow : Window
         DataContext = this;
         InitializeComponent();
         LoadSettings(settingsService.Current);
+        RefreshGeneralStatus();
         RefreshOcrStatus();
         CurrentVersionText.Text = _updateService.CurrentVersionDisplay;
         if (_updateService.LastRelease is { } release)
@@ -341,6 +351,78 @@ public partial class SettingsWindow : Window
         {
             HistoryDirectoryBox.Text = dialog.SelectedPath;
         }
+    }
+
+    private void RefreshGeneralStatus()
+    {
+        if (ShortcutStatusText is null)
+        {
+            return;
+        }
+
+        ShortcutStatusText.Text = _integrationService.IsStartMenuEntryPresent
+            ? "已创建；开始菜单与“应用和功能”中可见"
+            : _integrationService.IsRegisteredForUninstall
+                ? "开始菜单快捷方式缺失，但仍有卸载登记"
+                : "未创建";
+    }
+
+    private void OnCreateShortcutClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _integrationService.CreateStartMenuEntry();
+            RefreshGeneralStatus();
+            SetStatus("已创建开始菜单快捷方式", success: true);
+        }
+        catch (Exception exception)
+        {
+            SetStatus(exception.Message, success: false);
+        }
+    }
+
+    private void OnRemoveShortcutClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _integrationService.RemoveStartMenuEntry();
+            RefreshGeneralStatus();
+            SetStatus("已移除开始菜单快捷方式和卸载登记", success: true);
+        }
+        catch (Exception exception)
+        {
+            SetStatus(exception.Message, success: false);
+        }
+    }
+
+    private async void OnUninstallClick(object sender, RoutedEventArgs e)
+    {
+        var targets = _uninstallService.Describe(
+            _settingsService.Current,
+            _settingsService.DataDirectory);
+        var dialog = new UninstallWindow(targets) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.Options is not { } options)
+        {
+            return;
+        }
+
+        try
+        {
+            await _requestUninstall(options);
+        }
+        catch (Exception exception)
+        {
+            SetStatus(exception.Message, success: false);
+        }
+    }
+
+    private void SetStatus(string message, bool success)
+    {
+        StatusText.Text = message;
+        StatusText.Foreground = new System.Windows.Media.SolidColorBrush(
+            success
+                ? System.Windows.Media.Color.FromRgb(118, 223, 238)
+                : System.Windows.Media.Color.FromRgb(255, 145, 137));
     }
 
     private void OnCancelClick(object sender, RoutedEventArgs e) => Close();
