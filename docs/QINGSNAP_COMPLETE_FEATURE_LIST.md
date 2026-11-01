@@ -488,7 +488,7 @@ QingSnap 是一款面向 Windows 10/11 的轻量截图工具，将区域截图�
 - 显示当前版本。
 - 显示最新版本、发布日期、更新说明和文件大小。
 - 支持手动检查更新。
-- 检查 `zch-soft/QingSnap` 仓库的最新 Release，本分支安装包名为 `QingSnap(zch)-v<版本>.zip`。
+- 检查 `zch-soft/QingSnap` 仓库的最新 Release，本分支安装包名为 `QingSnap-zch-v<版本>.zip`。
 - 只识别 `zch-v<版本>` 形式的 tag，同步自上游的 `v1.x`、`preview-*` 等旧版本 tag 会被忽略，不会提示升级到上游版本。
 - 支持启动后低频后台检查更新。
 - 可以在设置中关闭自动检查。

@@ -27,7 +27,7 @@ This file documents notable changes in each public QingSnap preview release.
 
 ### zch 分支定制 / zch fork build
 
-- 版本号提升至 `2.0.0`，便携包改名 `QingSnap(zch)-v2.0.0.zip`，与 main 分支产物区分。  Version bumped to `2.0.0` and the portable package renamed to `QingSnap(zch)-v2.0.0.zip` to tell it apart from main-branch builds.
+- 版本号提升至 `2.0.0`，便携包改名 `QingSnap-zch-v2.0.0.zip`，与 main 分支产物区分。  Version bumped to `2.0.0` and the portable package renamed to `QingSnap-zch-v2.0.0.zip` to tell it apart from main-branch builds.
 - 更新检查、反馈提交与 OCR 模块下载地址改为指向 `zch-soft/QingSnap`；更新只认 `zch-v*` 形式的 Release，忽略同步自上游的旧版本 tag。  Update checks, feedback submissions, and OCR module downloads now target `zch-soft/QingSnap`, and update checks accept only `zch-v*` releases so mirrored upstream tags are ignored.
 
 ### 修复 / Fixes
