@@ -18,6 +18,7 @@ public partial class UninstallWindow : Window
         Bind(byKey["database"], DatabaseCheck, DatabasePathText);
         Bind(byKey["settings"], SettingsCheck, SettingsPathText);
         Bind(byKey["ocr"], OcrCheck, OcrPathText);
+        Bind(byKey["logs"], LogsCheck, LogsPathText);
     }
 
     public UninstallOptions? Options { get; private set; }
@@ -44,7 +45,8 @@ public partial class UninstallWindow : Window
             HistoryCheck.IsChecked == true,
             DatabaseCheck.IsChecked == true,
             SettingsCheck.IsChecked == true,
-            OcrCheck.IsChecked == true);
+            OcrCheck.IsChecked == true,
+            LogsCheck.IsChecked == true);
         DialogResult = true;
         Close();
     }

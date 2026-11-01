@@ -520,7 +520,7 @@
                                                    FontSize="10.5"
                                                    Foreground="{StaticResource TextMuted}"
                                                    TextWrapping="Wrap"
-                                                   Text="移除开始菜单快捷方式、开机启动和卸载登记；默认保留截图、数据库、设置与 OCR 模型。" />
+                                                   Text="移除开始菜单快捷方式、开机启动和卸载登记；默认保留截图、数据库、设置、OCR 模型、日志与临时文件。" />
                                     </StackPanel>
                                     <Button Grid.Column="1"
                                             VerticalAlignment="Center"

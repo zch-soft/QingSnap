@@ -18,8 +18,17 @@ public static class DiagnosticLog
         "QingSnap",
         "Logs");
     private static readonly string CurrentLogPath = Path.Combine(LogDirectory, "QingSnap.log");
+    private static bool _shutdown;
 
     public static string DirectoryPath => LogDirectory;
+
+    public static void Shutdown()
+    {
+        lock (Sync)
+        {
+            _shutdown = true;
+        }
+    }
 
     public static void Initialize()
     {
@@ -112,6 +121,11 @@ public static class DiagnosticLog
         {
             lock (Sync)
             {
+                if (_shutdown)
+                {
+                    return;
+                }
+
                 Directory.CreateDirectory(LogDirectory);
                 RotateIfNeeded();
                 var line = $"[{DateTimeOffset.Now:O}] [{level}] [{category}] {message}";

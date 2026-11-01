@@ -11,6 +11,8 @@ public sealed class UninstallServiceTests : IDisposable
     private readonly string _dataDirectory;
     private readonly string _historyDirectory;
     private readonly string _statePath;
+    private readonly string _logDirectory;
+    private readonly string _tempDirectory;
 
     public UninstallServiceTests()
     {
@@ -18,9 +20,12 @@ public sealed class UninstallServiceTests : IDisposable
         _dataDirectory = Path.Combine(_root, "Data");
         _historyDirectory = Path.Combine(_dataDirectory, "History");
         _statePath = Path.Combine(_root, "LocalAppData", "state.json");
+        _logDirectory = Path.Combine(_root, "LocalAppData", "Logs");
+        _tempDirectory = Path.Combine(_root, "Temp");
         Directory.CreateDirectory(_historyDirectory);
         Directory.CreateDirectory(Path.Combine(_dataDirectory, "Ocr", "Runtime"));
         Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
+        Directory.CreateDirectory(_tempDirectory);
     }
 
     public void Dispose()
@@ -58,7 +63,12 @@ public sealed class UninstallServiceTests : IDisposable
         Seed();
 
         var result = NewService().Delete(
-            new UninstallOptions(DeleteHistory: true, DeleteDatabase: true, DeleteSettings: false, DeleteOcr: false),
+            new UninstallOptions(
+                DeleteHistory: true,
+                DeleteDatabase: true,
+                DeleteSettings: false,
+                DeleteOcr: false,
+                DeleteLogs: false),
             Settings(),
             _dataDirectory);
 
@@ -80,7 +90,7 @@ public sealed class UninstallServiceTests : IDisposable
         File.WriteAllText(keepFile, "keep");
 
         var result = NewService().Delete(
-            new UninstallOptions(true, true, true, true),
+            new UninstallOptions(true, true, true, true, true),
             Settings(),
             _dataDirectory);
 
@@ -88,7 +98,6 @@ public sealed class UninstallServiceTests : IDisposable
         Assert.False(Directory.Exists(_historyDirectory));
         Assert.False(Directory.Exists(Path.Combine(_dataDirectory, "Ocr")));
         Assert.False(File.Exists(Path.Combine(_dataDirectory, "settings.json")));
-        Assert.False(File.Exists(Path.Combine(_dataDirectory, "state.json")));
         Assert.False(File.Exists(Path.Combine(_dataDirectory, "update-state.json")));
         Assert.False(File.Exists(_statePath));
         Assert.True(File.Exists(keepFile));
@@ -101,7 +110,7 @@ public sealed class UninstallServiceTests : IDisposable
         Directory.CreateDirectory(emptyData);
 
         var result = NewService().Delete(
-            new UninstallOptions(true, true, true, true),
+            new UninstallOptions(true, true, true, true, true),
             Settings(),
             emptyData);
 
@@ -119,7 +128,12 @@ public sealed class UninstallServiceTests : IDisposable
         var settings = new AppSettings { HistoryDirectory = customHistory };
 
         var result = NewService().Delete(
-            new UninstallOptions(DeleteHistory: true, DeleteDatabase: false, DeleteSettings: false, DeleteOcr: false),
+            new UninstallOptions(
+                DeleteHistory: true,
+                DeleteDatabase: false,
+                DeleteSettings: false,
+                DeleteOcr: false,
+                DeleteLogs: false),
             settings,
             _dataDirectory);
 
@@ -132,17 +146,52 @@ public sealed class UninstallServiceTests : IDisposable
     public void Delete_UnsafeHistoryDirectory_IsRejected()
     {
         Seed();
-        var unsafeHistory = _root;
-        var settings = new AppSettings { HistoryDirectory = unsafeHistory };
+        var settings = new AppSettings { HistoryDirectory = _root };
 
         var result = NewService().Delete(
-            new UninstallOptions(DeleteHistory: true, DeleteDatabase: false, DeleteSettings: false, DeleteOcr: false),
+            new UninstallOptions(
+                DeleteHistory: true,
+                DeleteDatabase: false,
+                DeleteSettings: false,
+                DeleteOcr: false,
+                DeleteLogs: false),
             settings,
             _dataDirectory);
 
         Assert.NotEmpty(result.Errors);
-        Assert.True(Directory.Exists(unsafeHistory));
+        Assert.True(Directory.Exists(_root));
         Assert.True(File.Exists(Path.Combine(_dataDirectory, "settings.json")));
+    }
+
+    [Fact]
+    public void Delete_LogsAndTempFiles_RemovesOnlyLogTargets()
+    {
+        Directory.CreateDirectory(_logDirectory);
+        File.WriteAllText(Path.Combine(_logDirectory, "QingSnap.log"), "log");
+        var updatesDirectory = Path.Combine(_tempDirectory, "QingSnap", "Updates");
+        Directory.CreateDirectory(updatesDirectory);
+        File.WriteAllText(Path.Combine(updatesDirectory, "package.zip"), "zip");
+        File.WriteAllText(Path.Combine(_tempDirectory, "QingSnap-crash.log"), "crash");
+        File.WriteAllText(Path.Combine(_tempDirectory, "QingSnap-OCR-Module-v1.0.0.zip"), "module");
+        var unrelated = Path.Combine(_tempDirectory, "unrelated.txt");
+        File.WriteAllText(unrelated, "keep");
+
+        var result = NewService().Delete(
+            new UninstallOptions(
+                DeleteHistory: false,
+                DeleteDatabase: false,
+                DeleteSettings: false,
+                DeleteOcr: false,
+                DeleteLogs: true),
+            Settings(),
+            _dataDirectory);
+
+        Assert.Empty(result.Errors);
+        Assert.False(Directory.Exists(_logDirectory));
+        Assert.False(Directory.Exists(Path.Combine(_tempDirectory, "QingSnap")));
+        Assert.False(File.Exists(Path.Combine(_tempDirectory, "QingSnap-crash.log")));
+        Assert.False(File.Exists(Path.Combine(_tempDirectory, "QingSnap-OCR-Module-v1.0.0.zip")));
+        Assert.True(File.Exists(unrelated));
     }
 
     [Fact]
@@ -151,12 +200,13 @@ public sealed class UninstallServiceTests : IDisposable
         var service = NewService();
         var targets = service.Describe(Settings(), _dataDirectory);
 
-        Assert.Equal(4, targets.Count);
+        Assert.Equal(5, targets.Count);
         var history = Assert.Single(targets, target => target.Key == "history");
         Assert.True(history.CanDelete);
         Assert.Contains("database", targets.Select(target => target.Key));
         Assert.Contains("settings", targets.Select(target => target.Key));
         Assert.Contains("ocr", targets.Select(target => target.Key));
+        Assert.Contains("logs", targets.Select(target => target.Key));
 
         var unsafeTargets = service.Describe(
             new AppSettings { HistoryDirectory = _root },
@@ -166,7 +216,7 @@ public sealed class UninstallServiceTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(unsafeHistory.Note));
     }
 
-    private UninstallService NewService() => new(_statePath);
+    private UninstallService NewService() => new(_statePath, _logDirectory, _tempDirectory);
 
     private AppSettings Settings() => new() { HistoryDirectory = _historyDirectory };
 

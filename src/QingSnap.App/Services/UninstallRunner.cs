@@ -17,6 +17,11 @@ internal static class UninstallRunner
     {
         var errors = new List<string>();
 
+        if (options.DeleteLogs)
+        {
+            DiagnosticLog.Shutdown();
+        }
+
         if (!options.DeleteSettings)
         {
             try

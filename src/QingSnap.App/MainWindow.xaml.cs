@@ -368,6 +368,12 @@ public partial class MainWindow : Window
         _settingsService.SettingsChanged -= OnSettingsChanged;
         DisposeOwnedServices();
 
+        // 可回收 AssemblyLoadContext 需要 GC 才会真正释放 OCR 原生库的文件句柄。
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+
         var result = await Task.Run(() => UninstallRunner.Run(
             options,
             _settingsService,

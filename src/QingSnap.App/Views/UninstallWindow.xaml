@@ -118,7 +118,7 @@
                         <TextBlock FontSize="10.5"
                                    Foreground="#FFFFB4AE"
                                    TextWrapping="Wrap"
-                                   Text="勾选的数据删除后不可恢复。日志与程序文件始终保留。" />
+                                   Text="勾选的数据删除后不可恢复。程序文件始终保留。" />
                     </Border>
 
                     <Border Margin="0,12,0,0"
@@ -178,6 +178,22 @@
                         <StackPanel>
                             <CheckBox x:Name="OcrCheck" Content="OCR 模型" />
                             <TextBlock x:Name="OcrPathText"
+                                       Margin="22,4,0,0"
+                                       FontSize="10"
+                                       Foreground="{StaticResource UninstallMuted}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Margin="0,8,0,0"
+                            Padding="12,9"
+                            Background="{StaticResource UninstallPanel}"
+                            BorderBrush="{StaticResource UninstallLine}"
+                            BorderThickness="1"
+                            CornerRadius="6">
+                        <StackPanel>
+                            <CheckBox x:Name="LogsCheck" Content="日志与临时文件" />
+                            <TextBlock x:Name="LogsPathText"
                                        Margin="22,4,0,0"
                                        FontSize="10"
                                        Foreground="{StaticResource UninstallMuted}"

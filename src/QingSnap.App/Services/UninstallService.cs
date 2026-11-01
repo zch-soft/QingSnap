@@ -15,17 +15,27 @@ public sealed record UninstallResult(IReadOnlyList<string> Deleted, IReadOnlyLis
 
 public sealed class UninstallService
 {
-    private const int DeleteAttempts = 3;
-    private const int RetryDelayMilliseconds = 150;
+    private const int DeleteAttempts = 6;
+    private const int RetryDelayMilliseconds = 250;
 
     private readonly string _statePath;
+    private readonly string _appDataDirectory;
+    private readonly string _logDirectory;
+    private readonly string _tempDirectory;
 
-    public UninstallService(string? statePath = null)
+    public UninstallService(
+        string? statePath = null,
+        string? logDirectory = null,
+        string? tempDirectory = null)
     {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         _statePath = Path.GetFullPath(statePath ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            localAppData,
             "QingSnap",
             "state.json"));
+        _appDataDirectory = Path.GetDirectoryName(_statePath)!;
+        _logDirectory = Path.GetFullPath(logDirectory ?? Path.Combine(_appDataDirectory, "Logs"));
+        _tempDirectory = Path.GetFullPath(tempDirectory ?? Path.GetTempPath());
     }
 
     public IReadOnlyList<UninstallTarget> Describe(AppSettings settings, string dataDirectory)
@@ -72,6 +82,13 @@ public sealed class UninstallService
                 ocrPath,
                 Directory.Exists(ocrPath),
                 true,
+                null),
+            new UninstallTarget(
+                "logs",
+                "日志与临时文件",
+                _logDirectory,
+                LogTargetsExist(),
+                true,
                 null)
         ];
     }
@@ -114,6 +131,14 @@ public sealed class UninstallService
                 deleted,
                 errors);
         }
+
+        if (options.DeleteLogs)
+        {
+            DeleteLogs(deleted, errors);
+        }
+
+        TryDeleteEmptyDirectory(data);
+        TryDeleteEmptyDirectory(_appDataDirectory);
 
         return new UninstallResult(deleted, errors);
     }
@@ -222,6 +247,50 @@ public sealed class UninstallService
         yield return Path.Combine(dataDirectory, "selection-presets.json");
         yield return Path.Combine(dataDirectory, "update-state.json");
         yield return _statePath;
+    }
+
+    private void DeleteLogs(List<string> deleted, List<string> errors)
+    {
+        DeleteDirectoryIfExists(_logDirectory, deleted, errors);
+        DeleteDirectoryIfExists(Path.Combine(_tempDirectory, "QingSnap"), deleted, errors);
+        DeleteFileIfExists(Path.Combine(_tempDirectory, "QingSnap-crash.log"), deleted, errors);
+
+        foreach (var package in OcrPackagesInTemp())
+        {
+            DeleteFileIfExists(package, deleted, errors);
+        }
+    }
+
+    private bool LogTargetsExist() =>
+        Directory.Exists(_logDirectory) ||
+        Directory.Exists(Path.Combine(_tempDirectory, "QingSnap")) ||
+        File.Exists(Path.Combine(_tempDirectory, "QingSnap-crash.log")) ||
+        OcrPackagesInTemp().Any();
+
+    private IEnumerable<string> OcrPackagesInTemp()
+    {
+        try
+        {
+            return Directory.EnumerateFiles(_tempDirectory, "QingSnap-OCR-Module-*.zip").ToArray();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    private static void TryDeleteEmptyDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any())
+            {
+                Directory.Delete(path, false);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     private static void DeleteFileIfExists(string path, List<string> deleted, List<string> errors)
