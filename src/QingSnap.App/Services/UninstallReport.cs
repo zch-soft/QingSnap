@@ -35,6 +35,12 @@ internal static class UninstallReport
             builder.AppendLine($"  ! {error}");
         }
 
+        builder.AppendLine($"Pending after exit: {result.Pending?.Count ?? 0}");
+        foreach (var item in result.Pending ?? [])
+        {
+            builder.AppendLine($"  ~ {item}");
+        }
+
         File.WriteAllText(path, builder.ToString(), new UTF8Encoding(false));
         return path;
     }

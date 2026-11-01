@@ -15,7 +15,8 @@ public sealed record UninstallResult(
     IReadOnlyList<string> Deleted,
     IReadOnlyList<string> Errors,
     string? ErrorLogPath = null,
-    bool LogsScheduled = false);
+    bool LogsScheduled = false,
+    IReadOnlyList<string>? Pending = null);
 
 public sealed class UninstallService
 {
@@ -143,10 +144,18 @@ public sealed class UninstallService
             DeleteLogs(deleted, errors);
         }
 
+        var pending = new List<string>();
+        CollectPending(options, data, pending);
+        if (pending.Count > 0)
+        {
+            errors.RemoveAll(error => pending.Any(path =>
+                error.StartsWith(path, StringComparison.OrdinalIgnoreCase)));
+        }
+
         TryDeleteEmptyDirectory(data);
         TryDeleteEmptyDirectory(_appDataDirectory);
 
-        return new UninstallResult(deleted, errors);
+        return new UninstallResult(deleted, errors, Pending: pending);
     }
 
     internal static bool IsSafeHistoryDirectory(
@@ -253,6 +262,51 @@ public sealed class UninstallService
         yield return Path.Combine(dataDirectory, "selection-presets.json");
         yield return Path.Combine(dataDirectory, "update-state.json");
         yield return _statePath;
+    }
+
+    private void CollectPending(
+        UninstallOptions options,
+        string dataDirectory,
+        List<string> pending)
+    {
+        if (options.DeleteOcr)
+        {
+            var ocrDirectory = Path.Combine(dataDirectory, "Ocr");
+            if (Directory.Exists(ocrDirectory))
+            {
+                pending.Add(ocrDirectory);
+            }
+
+            var legacyDirectory = Path.Combine(AppContext.BaseDirectory, "AdvancedOcr");
+            if (Directory.Exists(legacyDirectory))
+            {
+                pending.Add(legacyDirectory);
+            }
+        }
+
+        if (!options.DeleteLogs)
+        {
+            return;
+        }
+
+        if (Directory.Exists(_logDirectory))
+        {
+            pending.Add(_logDirectory);
+        }
+
+        var tempDirectory = Path.Combine(_tempDirectory, "QingSnap");
+        if (Directory.Exists(tempDirectory))
+        {
+            pending.Add(tempDirectory);
+        }
+
+        var crashLog = Path.Combine(_tempDirectory, "QingSnap-crash.log");
+        if (File.Exists(crashLog))
+        {
+            pending.Add(crashLog);
+        }
+
+        pending.AddRange(OcrPackagesInTemp());
     }
 
     private void DeleteLogs(List<string> deleted, List<string> errors)

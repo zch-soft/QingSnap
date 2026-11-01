@@ -51,16 +51,26 @@ internal static class UninstallRunner
         var result = uninstallService.Delete(options, settingsService.Current, settingsService.DataDirectory);
         result = result with { Errors = errors.Concat(result.Errors).ToArray() };
 
+        var pending = result.Pending ?? [];
+        if (pending.Count > 0 && !PostExitCleanup.Schedule(pending))
+        {
+            result = result with
+            {
+                Errors = result.Errors
+                    .Concat([$"无法安排退出后清理：{string.Join("、", pending)}"])
+                    .ToArray()
+            };
+        }
+
         if (result.Errors.Count == 0)
         {
-            if (!options.DeleteLogs)
+            if (options.DeleteLogs)
             {
-                return result;
+                DiagnosticLog.Shutdown();
+                RebootDeletion.ScheduleDirectory(uninstallService.LogDirectory);
             }
 
-            DiagnosticLog.Shutdown();
-            RebootDeletion.ScheduleDirectory(uninstallService.LogDirectory);
-            return result with { LogsScheduled = true };
+            return result with { LogsScheduled = options.DeleteLogs };
         }
 
         var reportPath = UninstallReport.Write(result, options, uninstallService.LogDirectory);
@@ -86,6 +96,18 @@ internal static class UninstallRunner
             }
 
             failure.AppendLine();
+            var pendingItems = result.Pending ?? [];
+            if (pendingItems.Count > 0)
+            {
+                failure.AppendLine("以下被占用的文件将在程序退出后自动删除：");
+                foreach (var item in pendingItems)
+                {
+                    failure.AppendLine($"· {item}");
+                }
+
+                failure.AppendLine();
+            }
+
             failure.AppendLine($"失败原因已写入日志：{logPath}");
             failure.AppendLine($"程序文件夹：{executableDirectory}");
             failure.AppendLine();
@@ -117,6 +139,12 @@ internal static class UninstallRunner
         {
             builder.AppendLine();
             builder.AppendLine("残留日志已标记为重启或下次登录后删除。");
+        }
+
+        if ((result.Pending?.Count ?? 0) > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("部分被占用的文件将在程序退出后自动删除。");
         }
 
         builder.AppendLine();

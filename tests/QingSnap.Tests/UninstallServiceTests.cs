@@ -195,6 +195,30 @@ public sealed class UninstallServiceTests : IDisposable
     }
 
     [Fact]
+    public void Delete_LockedOcrFile_IsDeferred()
+    {
+        Seed();
+        var ocrDirectory = Path.Combine(_dataDirectory, "Ocr");
+        var lockedFile = Path.Combine(ocrDirectory, "Runtime", "engine.dll");
+        using var stream = new FileStream(lockedFile, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var result = NewService().Delete(
+            new UninstallOptions(
+                DeleteHistory: false,
+                DeleteDatabase: false,
+                DeleteSettings: false,
+                DeleteOcr: true,
+                DeleteLogs: false),
+            Settings(),
+            _dataDirectory);
+
+        Assert.Empty(result.Errors);
+        Assert.NotNull(result.Pending);
+        Assert.Contains(ocrDirectory, result.Pending);
+        Assert.True(Directory.Exists(ocrDirectory));
+    }
+
+    [Fact]
     public void UninstallReport_WritesErrorsAndOptions()
     {
         var result = new UninstallResult(["deleted-file"], ["boom"]);
