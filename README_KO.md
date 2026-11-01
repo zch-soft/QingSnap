@@ -65,7 +65,7 @@ ZIP 압축을 풀고 `QingSnap.exe`를 실행하세요. [.NET 8 Desktop Runtime]
 
 ## 개인정보 및 빌드
 
-이미지, OCR 텍스트, QR 내용은 제3자에게 업로드되지 않습니다. 네트워크는 사용자가 시작한 OCR 다운로드, 업데이트 확인, Release 다운로드에만 사용됩니다. Release 패키지에는 `portable.flag`가 포함되어 있어 설정, 데이터베이스, 캡처 기록, OCR 모델이 `QingSnap.exe`와 같은 폴더의 `Data\`에 저장됩니다. `portable.flag`를 삭제하면 표준 모드로 돌아가 `%LOCALAPPDATA%\QingSnap`에 저장됩니다. 쓰기 권한이 있는 폴더에 압축을 풀어 주세요.
+이미지, OCR 텍스트, QR 내용은 제3자에게 업로드되지 않습니다. 네트워크는 사용자가 시작한 OCR 다운로드, 업데이트 확인, Release 다운로드에만 사용됩니다. 기본값은 포터블 모드이며 설정, 데이터베이스, 캡처 기록, OCR 모델이 `QingSnap.exe`와 같은 폴더의 `Data\`에 저장됩니다. 표준 모드로 전환하려면 설정에서 포터블 모드를 끄거나 `portable.off` 파일을 두세요. 다음 시작 시 `%LOCALAPPDATA%\QingSnap`으로 데이터를 옮깁니다. 쓰기 권한이 있는 폴더에 압축을 풀어 주세요.
 
 ```powershell
 dotnet restore QingSnap.sln

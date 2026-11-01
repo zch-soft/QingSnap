@@ -65,7 +65,7 @@ QingSnap 是一款適用於 Windows 10/11 的輕量截圖工具，將智慧截�
 
 ## 隱私與建置
 
-圖片、OCR 文字和 QR 內容不會上傳第三方。網路只用於使用者主動下載 OCR、檢查更新或下載 Release。發布包內建 `portable.flag`，設定、資料庫、截圖歷史與 OCR 模型預設保存在程式目錄下的 `Data\`；移除 `portable.flag` 後回到標準模式，資料改存於 `%LOCALAPPDATA%\QingSnap`。請解壓到有寫入權限的資料夾。
+圖片、OCR 文字和 QR 內容不會上傳第三方。網路只用於使用者主動下載 OCR、檢查更新或下載 Release。預設即為攜帶模式，設定、資料庫、截圖歷史與 OCR 模型保存在程式目錄下的 `Data\`；要改用標準模式，請在設定中關閉攜帶模式或放置 `portable.off`，重新啟動後會把資料遷移到 `%LOCALAPPDATA%\QingSnap`。請解壓到有寫入權限的資料夾。
 
 ```powershell
 dotnet restore QingSnap.sln

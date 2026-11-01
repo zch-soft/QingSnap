@@ -60,6 +60,8 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        PortableModeService.TryApplyPendingSwitch(AppContext.BaseDirectory);
+
         _hostWindow = new MainWindow();
         DiagnosticLog.Info("Application", "Main window and tray host created.");
         _ = Task.Run(() => new ClipboardTempFileStore().CleanupExpired());

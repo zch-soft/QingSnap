@@ -11,6 +11,7 @@ using QingSnap.App.Services;
 using WpfComboBox = System.Windows.Controls.ComboBox;
 using WpfTextBox = System.Windows.Controls.TextBox;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
+using MessageBox = System.Windows.MessageBox;
 
 namespace QingSnap.App.Views;
 
@@ -94,6 +95,8 @@ public partial class SettingsWindow : Window
     private void LoadSettings(AppSettings settings)
     {
         StartupCheck.IsChecked = settings.StartWithWindows;
+        PortableModeCheck.IsChecked = _settingsService.IsPortableMode;
+        PortableModePathText.Text = $"当前数据目录：{_settingsService.DataDirectory}";
         AutoUpdateCheck.IsChecked = settings.AutoCheckUpdates;
         HistoryDirectoryBox.Text = settings.HistoryDirectory;
         RetentionBox.Text = settings.HistoryRetentionDays.ToString();
@@ -161,7 +164,22 @@ public partial class SettingsWindow : Window
             _settingsService.Save(settings);
             var failures = _getHotkeyRegistrationFailures();
             ShowHotkeyRegistrationFailures(failures);
-            if (failures.Count == 0)
+            var portableMessage = ApplyPortableModeChange();
+            if (portableMessage is { } message)
+            {
+                StatusText.Text = message.Message;
+                StatusText.Foreground = new System.Windows.Media.SolidColorBrush(
+                    message.IsError
+                        ? System.Windows.Media.Color.FromRgb(255, 145, 137)
+                        : System.Windows.Media.Color.FromRgb(118, 223, 238));
+                MessageBox.Show(
+                    this,
+                    message.Message,
+                    "QingSnap",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+            else if (failures.Count == 0)
             {
                 StatusText.Text = "设置已保存并应用";
                 StatusText.Foreground = new System.Windows.Media.SolidColorBrush(
@@ -180,6 +198,31 @@ public partial class SettingsWindow : Window
             StatusText.Foreground = new System.Windows.Media.SolidColorBrush(
                 System.Windows.Media.Color.FromRgb(255, 145, 137));
         }
+    }
+
+    private (string Message, bool IsError)? ApplyPortableModeChange()
+    {
+        var requested = PortableModeCheck.IsChecked == true;
+        if (requested == _settingsService.IsPortableMode)
+        {
+            return null;
+        }
+
+        var target = requested
+            ? PortableModeService.GetPortableDataDirectory(AppContext.BaseDirectory)
+            : PortableModeService.GetInstalledDataDirectory();
+        try
+        {
+            PortableModeService.RequestSwitch(AppContext.BaseDirectory, requested);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            PortableModeCheck.IsChecked = _settingsService.IsPortableMode;
+            return ($"无法记录便携模式切换：{exception.Message}", true);
+        }
+
+        PortableModePathText.Text = $"重启后数据目录：{target}";
+        return ($"已记录切换，重启 QingSnap 后会把数据迁移到 {target}。", false);
     }
 
     private List<HotkeyBinding> BuildValidatedHotkeys()

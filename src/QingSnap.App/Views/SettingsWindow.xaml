@@ -482,6 +482,13 @@
                         <StackPanel>
                             <TextBlock Style="{StaticResource SectionLabel}" Text="GENERAL  /  通用设置" />
                             <CheckBox x:Name="StartupCheck" Margin="0,14,0,0" Content="登录 Windows 后自动启动 QingSnap" />
+                            <CheckBox x:Name="PortableModeCheck" Margin="0,10,0,0" Content="便携模式（默认）：配置、历史与 OCR 模型保存在程序目录 Data 下" />
+                            <TextBlock x:Name="PortableModePathText"
+                                       Margin="0,3,0,0"
+                                       FontSize="10.5"
+                                       Foreground="{StaticResource TextMuted}"
+                                       TextWrapping="Wrap"
+                                       Text="当前数据目录：" />
 
                             <Grid Margin="0,16,0,0">
                                 <Grid.ColumnDefinitions>
@@ -976,7 +983,7 @@
                     <TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="{StaticResource TextMuted}" Text="修改后点击保存"/>
                     <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
                         <Button Style="{StaticResource ActionButton}" Content="取消" Click="OnCancelClick"/>
-                        <Button Style="{StaticResource PrimaryButton}" Content="保存设置" Click="OnSaveClick"/>
+                        <Button x:Name="SaveButton" Style="{StaticResource PrimaryButton}" Content="保存设置" Click="OnSaveClick"/>
                     </StackPanel>
                 </Grid>
             </Border>

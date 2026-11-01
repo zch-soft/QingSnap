@@ -3,6 +3,15 @@
 本文件记录 QingSnap 各公开预览版本的重要变化。
 This file documents notable changes in each public QingSnap preview release.
 
+## [Unreleased]
+
+### 便携模式 / Portable mode
+
+- 便携模式改为默认开启，发布包不再内置 `portable.flag`；要改用标准数据目录，在设置中关闭便携模式或放置 `portable.off`。  Portable mode is now the default and the package no longer ships `portable.flag`; turn it off in Settings or place `portable.off` to use the standard data directory.
+- 更新包不再写入 `portable.flag`，用户对数据位置的选择不会被后续更新覆盖。  Later updates no longer write `portable.flag`, so a user's data-location choice survives them.
+- 切换数据位置改为在下次启动时迁移配置、历史、数据库与 OCR 模型，避免运行中被占用的 OCR 原生库导致复制失败。  Data-location changes are applied on the next start, so files locked while running, such as OCR native libraries, no longer break the migration.
+- 设置页新增便携模式开关，并显示当前数据目录。  Added a portable-mode switch and the current data directory to Settings.
+
 ## [2.0.1] - 2026-11-01
 
 ### 更新检查 / Update checks

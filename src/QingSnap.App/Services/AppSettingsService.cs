@@ -22,7 +22,7 @@ public sealed class AppSettingsService
 
     public string DataDirectory { get; }
 
-    public bool IsPortableMode => File.Exists(Path.Combine(AppContext.BaseDirectory, "portable.flag"));
+    public bool IsPortableMode => PortableModeService.IsEnabled(AppContext.BaseDirectory);
 
     public AppSettings Current { get; private set; }
 
@@ -216,9 +216,5 @@ public sealed class AppSettingsService
     }
 
     private static string ResolveDataDirectory() =>
-        File.Exists(Path.Combine(AppContext.BaseDirectory, "portable.flag"))
-            ? Path.Combine(AppContext.BaseDirectory, "Data")
-            : Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "QingSnap");
+        PortableModeService.ResolveDataDirectory(AppContext.BaseDirectory);
 }

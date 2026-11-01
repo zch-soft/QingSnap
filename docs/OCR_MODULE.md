@@ -27,4 +27,4 @@ QingSnap 基础包不包含 OCR。截图、长截图、标注、贴图和历史�
 - `%LOCALAPPDATA%\QingSnap\Ocr\Runtime`
 - `%LOCALAPPDATA%\QingSnap\Ocr\Models`
 
-创建 `portable.flag` 使用便携数据模式时，这些文件会保存到程序目录的 `Data\Ocr` 下。
+默认便携模式下，这些文件保存在程序目录的 `Data\Ocr` 下；在设置中关闭便携模式（或放置 `portable.off`）后保存到 `%LOCALAPPDATA%\QingSnap\Ocr`。

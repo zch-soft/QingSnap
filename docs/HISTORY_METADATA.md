@@ -7,7 +7,7 @@ QingSnap keeps screenshot image bytes in the configured history directory as ord
 - Standard mode: `%LOCALAPPDATA%\QingSnap\history-metadata.db`
 - Portable mode: `<QingSnap directory>\Data\history-metadata.db`
 
-The path is based on `AppSettingsService.DataDirectory`, so enabling `portable.flag` keeps the database with the portable data directory even when a custom screenshot history directory is configured.
+The path is based on `AppSettingsService.DataDirectory`, so the default portable mode keeps the database with the portable data directory even when a custom screenshot history directory is configured.
 
 ## Schema version 1
 

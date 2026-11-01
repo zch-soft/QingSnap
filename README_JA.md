@@ -65,7 +65,7 @@ ZIP を展開して `QingSnap.exe` を実行してください。[.NET 8 Desktop
 
 ## プライバシーとビルド
 
-画像、OCR テキスト、QR 内容は第三者へ送信されません。通信はユーザーが開始した OCR ダウンロード、更新確認、Release ダウンロードにのみ使用します。Release パッケージには `portable.flag` が同梱されており、設定・データベース・キャプチャ履歴・OCR モデルは `QingSnap.exe` と同じフォルダーの `Data\` に保存されます。`portable.flag` を削除すると標準モードに戻り、`%LOCALAPPDATA%\QingSnap` に保存されます。書き込み権限のあるフォルダーに展開してください。
+画像、OCR テキスト、QR 内容は第三者へ送信されません。通信はユーザーが開始した OCR ダウンロード、更新確認、Release ダウンロードにのみ使用します。既定ではポータブルモードで動作し、設定・データベース・キャプチャ履歴・OCR モデルは `QingSnap.exe` と同じフォルダーの `Data\` に保存されます。標準モードに切り替えるには設定でポータブルモードをオフにするか、`portable.off` を置いてください。次回起動時に `%LOCALAPPDATA%\QingSnap` へデータを移行します。書き込み権限のあるフォルダーに展開してください。
 
 ```powershell
 dotnet restore QingSnap.sln
