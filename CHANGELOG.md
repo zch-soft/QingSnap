@@ -3,6 +3,35 @@
 本文件记录 QingSnap 各公开预览版本的重要变化。
 This file documents notable changes in each public QingSnap preview release.
 
+## [2.0.0] - 2026-11-01
+
+### 多选区与矩阵截图 / Multi-region and matrix capture
+
+- 覆盖层支持自由多选区：拖拽新建、移动、缩放与删除，并保留 `Alt` 中心缩放、`Ctrl` 强制新建等既有操作。  The overlay now supports free-form multi-region selection with create, move, resize, and delete, while keeping `Alt` center-scaling and `Ctrl` force-create.
+- 新增命名选区、选区列表面板与快速标签弹窗，可从托盘和设置中复用常用选区。  Added named regions, a selection list panel, and a quick-tag popup so frequently used regions can be reused from the tray and settings.
+- 新增矩阵截图模式：按行列拆分、矩阵覆盖层交互、矩阵文件命名，并支持单图合并或多文件输出与剪贴板图像集。  Added matrix capture with row/column splitting, matrix overlay interaction, matrix file naming, and single-image or multi-file output including clipboard image sets.
+- 历史记录按多图组识别与折叠，多选区截图可整体还原和复用。  History now recognizes and collapses multi-image groups, so multi-region captures can be restored and reused as a whole.
+
+### 安装与卸载 / Install and uninstall
+
+- 设置页新增通用设置，可创建开始菜单快捷方式，并提供卸载入口。  Added a general settings page with Start menu shortcut creation and an uninstall entry.
+- 卸载时释放 OCR 文件锁、清理日志与临时文件，失败时输出报告；成功标记日志改为重启后删除。  Uninstall now releases OCR file locks, cleans logs and temporary files, writes a report on failure, and removes the success marker after restart.
+- 便携包内置 `portable.flag`，`Portable` 发布配置在发布后自动生成 ZIP。  The portable package ships a `portable.flag`, and the `Portable` publish profile produces the ZIP automatically.
+
+### zch 分支定制 / zch fork build
+
+- 版本号提升至 `2.0.0`，便携包改名 `QingSnap(zch)-v2.0.0.zip`，与 main 分支产物区分。  Version bumped to `2.0.0` and the portable package renamed to `QingSnap(zch)-v2.0.0.zip` to tell it apart from main-branch builds.
+- 更新检查、反馈提交与 OCR 模块下载地址改为指向 `zch-soft/QingSnap`。  Update checks, feedback submissions, and OCR module downloads now target `zch-soft/QingSnap`.
+
+### 修复 / Fixes
+
+- 修正拖动移动选区时的 1 像素尺寸抖动、历史选区在拖动或缩放后消失，以及重复上次选区时透明外扩边距累积。  Fixed 1-pixel size jitter while dragging, history regions disappearing after drag or resize, and accumulated transparent margins when repeating the last region.
+- 修正剪贴板被占用时的图像集重试、单元格记录不完整时的矩阵命名回退、托盘菜单重建时的释放顺序，以及多选区下窗口预览与工具栏交互。  Fixed clipboard image-set retries under contention, matrix naming fallback for incomplete cell records, tray menu disposal order, and window preview and toolbar behavior under multi-region selection.
+
+### 质量 / Quality
+
+- 自动化测试：221 / 221 通过；Release 编译：0 Warning / 0 Error。  All 221 automated tests pass, with zero Release build warnings and errors.
+
 ## [1.1.1] - 2026-09-06
 
 ### 首次使用教程 / First-run tutorial
@@ -283,6 +312,7 @@ This index covers every local preview build between public releases. `Internal i
 | v1 | 2026-08-19 | 区域截图、重复范围、自动复制、历史保存、托盘与单实例 / region capture, repeat region, automatic copy, history storage, tray, and single instance |
 
 [Preview v48]: https://github.com/za5132-web/QingSnap/compare/preview-v47...preview-v48
+[2.0.0]: https://github.com/zch-soft/QingSnap/compare/v1.1.1...v2.0.0
 [1.1.1]: https://github.com/za5132-web/QingSnap/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/za5132-web/QingSnap/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/za5132-web/QingSnap/compare/v1.0.1...v1.0.2
