@@ -9,7 +9,7 @@ namespace QingSnap.App.Views;
 
 public partial class FeedbackWindow : Window
 {
-    private const string NewIssueUrl = "https://github.com/za5132-web/QingSnap/issues/new";
+    private const string NewIssueUrl = "https://github.com/zch-soft/QingSnap/issues/new";
     private readonly AppSettingsService _settingsService;
 
     public FeedbackWindow(AppSettingsService settingsService)
