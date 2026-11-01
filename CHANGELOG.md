@@ -3,6 +3,13 @@
 本文件记录 QingSnap 各公开预览版本的重要变化。
 This file documents notable changes in each public QingSnap preview release.
 
+## [2.0.1] - 2026-11-01
+
+### 更新检查 / Update checks
+
+- 更新检查改为读取 Release 列表，只识别 `zch-v<版本>` 形式的 tag，忽略同步自上游的 `v1.x`、`preview-*` 等旧版本 tag，避免提示升级到上游版本。  Update checks now read the release list and accept only `zch-v<version>` tags, ignoring mirrored upstream tags such as `v1.x` and `preview-*` so users are never offered an upstream build.
+- 仓库中还没有 `zch-v` 发布时，检查结果显示“当前已经是最新版本”，而不是报错。  When no `zch-v` release exists yet, the check reports up to date instead of failing.
+
 ## [2.0.0] - 2026-11-01
 
 ### 多选区与矩阵截图 / Multi-region and matrix capture
@@ -312,7 +319,8 @@ This index covers every local preview build between public releases. `Internal i
 | v1 | 2026-08-19 | 区域截图、重复范围、自动复制、历史保存、托盘与单实例 / region capture, repeat region, automatic copy, history storage, tray, and single instance |
 
 [Preview v48]: https://github.com/za5132-web/QingSnap/compare/preview-v47...preview-v48
-[2.0.0]: https://github.com/zch-soft/QingSnap/compare/v1.1.1...v2.0.0
+[2.0.1]: https://github.com/zch-soft/QingSnap/compare/zch-v2.0.0...zch-v2.0.1
+[2.0.0]: https://github.com/zch-soft/QingSnap/compare/v1.1.1...zch-v2.0.0
 [1.1.1]: https://github.com/za5132-web/QingSnap/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/za5132-web/QingSnap/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/za5132-web/QingSnap/compare/v1.0.1...v1.0.2
