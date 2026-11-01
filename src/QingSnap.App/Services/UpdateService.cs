@@ -15,8 +15,9 @@ public sealed partial class UpdateService : IDisposable
 {
     private const string RepositoryOwner = "zch-soft";
     private const string RepositoryName = "QingSnap";
-    private static readonly Uri LatestReleaseApiUri =
-        new($"https://api.github.com/repos/{RepositoryOwner}/{RepositoryName}/releases/latest");
+    private static readonly Uri ReleasesApiUri =
+        new($"https://api.github.com/repos/{RepositoryOwner}/{RepositoryName}/releases?per_page=100");
+    private const string ReleaseTagPrefix = "zch-v";
     private static readonly TimeSpan AutomaticCheckInterval = TimeSpan.FromHours(12);
 
     private readonly HttpClient _client;
@@ -71,18 +72,27 @@ public sealed partial class UpdateService : IDisposable
         try
         {
             using var response = await _client.GetAsync(
-                LatestReleaseApiUri,
+                ReleasesApiUri,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
             response.EnsureSuccessStatusCode();
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            var root = document.RootElement;
-            var tagName = ReadRequiredString(root, "tag_name");
-            if (!TryParseVersion(tagName, out var latestVersion))
+            var releases = document.RootElement;
+            if (releases.ValueKind != JsonValueKind.Array)
             {
-                throw new InvalidDataException($"GitHub Release 版本号无效：{tagName}");
+                throw new InvalidDataException("GitHub Release 列表格式无效。");
             }
+
+            if (!TrySelectLatestZchRelease(releases, out var root, out var latestVersion))
+            {
+                DiagnosticLog.Info("Update", $"仓库中没有 {ReleaseTagPrefix}* 形式的发布，跳过更新。");
+                return new UpdateCheckResult(
+                    UpdateCheckStatus.UpToDate,
+                    Message: $"暂未发布 {ReleaseTagPrefix} 版本更新包。");
+            }
+
+            var tagName = ReadRequiredString(root, "tag_name");
 
             var publishedAt = root.TryGetProperty("published_at", out var publishedElement) &&
                               publishedElement.ValueKind == JsonValueKind.String &&
@@ -283,6 +293,52 @@ public sealed partial class UpdateService : IDisposable
 
         return Version.TryParse(normalized, out version!);
     }
+
+    internal static bool TryParseZchTag(string? tag, out Version version)
+    {
+        version = null!;
+        var normalized = tag?.Trim();
+        if (string.IsNullOrEmpty(normalized) ||
+            !normalized.StartsWith(ReleaseTagPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return TryParseVersion(normalized[ReleaseTagPrefix.Length..], out version);
+    }
+
+    private static bool TrySelectLatestZchRelease(
+        JsonElement releases,
+        out JsonElement release,
+        out Version version)
+    {
+        release = default;
+        version = null!;
+        var found = false;
+        foreach (var candidate in releases.EnumerateArray())
+        {
+            if (candidate.ValueKind != JsonValueKind.Object ||
+                IsTrue(candidate, "draft") ||
+                IsTrue(candidate, "prerelease") ||
+                !candidate.TryGetProperty("tag_name", out var tagElement) ||
+                !TryParseZchTag(tagElement.GetString(), out var candidateVersion))
+            {
+                continue;
+            }
+
+            if (!found || candidateVersion > version)
+            {
+                release = candidate;
+                version = candidateVersion;
+                found = true;
+            }
+        }
+
+        return found;
+    }
+
+    private static bool IsTrue(JsonElement element, string propertyName) =>
+        element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.True;
 
     internal static string? TryExtractSha256(string? text, string packageName)
     {

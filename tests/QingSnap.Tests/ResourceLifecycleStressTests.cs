@@ -115,19 +115,24 @@ public sealed class ResourceLifecycleStressTests(ITestOutputHelper output)
         Directory.CreateDirectory(dataDirectory);
         try
         {
-            var payload = JsonSerializer.Serialize(new
+            var payload = JsonSerializer.Serialize(new object[]
             {
-                tag_name = "v1.1.0",
-                published_at = "2026-09-05T01:30:00Z",
-                body = $"SHA-256: {new string('A', 64)}",
-                html_url = "https://github.com/za5132-web/QingSnap/releases/tag/v1.1.0",
-                assets = new[]
+                new
                 {
-                    new
+                    tag_name = "zch-v1.1.0",
+                    draft = false,
+                    prerelease = false,
+                    published_at = "2026-09-05T01:30:00Z",
+                    body = $"SHA-256: {new string('A', 64)}",
+                    html_url = "https://github.com/zch-soft/QingSnap/releases/tag/zch-v1.1.0",
+                    assets = new[]
                     {
-                        name = "QingSnap-v1.1.0.zip",
-                        browser_download_url = "https://github.com/za5132-web/QingSnap/releases/download/v1.1.0/QingSnap-v1.1.0.zip",
-                        size = 1024
+                        new
+                        {
+                            name = "QingSnap(zch)-v1.1.0.zip",
+                            browser_download_url = "https://github.com/zch-soft/QingSnap/releases/download/zch-v1.1.0/QingSnap(zch)-v1.1.0.zip",
+                            size = 1024
+                        }
                     }
                 }
             });

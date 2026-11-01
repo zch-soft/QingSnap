@@ -13,17 +13,27 @@ namespace QingSnap.Tests;
 public sealed class UpdateServiceTests
 {
     [Theory]
-    [InlineData("v1.2.3", 1, 2, 3)]
-    [InlineData("1.3.0-beta.1", 1, 3, 0)]
-    [InlineData("V2.0.1+build.7", 2, 0, 1)]
-    public void TryParseVersion_AcceptsReleaseTagFormats(
+    [InlineData("zch-v1.2.3", 1, 2, 3)]
+    [InlineData("ZCH-V2.0.1", 2, 0, 1)]
+    [InlineData("zch-v1.3.0-beta.1", 1, 3, 0)]
+    public void TryParseZchTag_AcceptsZchReleaseTags(
         string value,
         int major,
         int minor,
         int build)
     {
-        Assert.True(UpdateService.TryParseVersion(value, out var version));
+        Assert.True(UpdateService.TryParseZchTag(value, out var version));
         Assert.Equal(new Version(major, minor, build), version);
+    }
+
+    [Theory]
+    [InlineData("v1.1.1")]
+    [InlineData("preview-v47")]
+    [InlineData("2.0.0")]
+    [InlineData("")]
+    public void TryParseZchTag_RejectsLegacyTags(string value)
+    {
+        Assert.False(UpdateService.TryParseZchTag(value, out _));
     }
 
     [Fact]
@@ -37,25 +47,48 @@ public sealed class UpdateServiceTests
     }
 
     [Fact]
-    public async Task CheckForUpdatesAsync_ParsesGitHubReleaseAndDetectsNewVersion()
+    public async Task CheckForUpdatesAsync_SelectsZchReleaseAndIgnoresLegacyTags()
     {
         var dataDirectory = CreateDataDirectory();
         try
         {
             const string hash = "21031098EFF6D22131DD3A76E9D67B8DB19A8B73D4A1DCF761363E9F1C3288C3";
-            var payload = JsonSerializer.Serialize(new
+            var payload = JsonSerializer.Serialize(new object[]
             {
-                tag_name = "v1.1.0",
-                published_at = "2026-09-05T01:30:00Z",
-                body = $"功能更新\nSHA-256: {hash}",
-                html_url = "https://github.com/za5132-web/QingSnap/releases/tag/v1.1.0",
-                assets = new[]
+                new
                 {
-                    new
+                    tag_name = "v9.9.9",
+                    draft = false,
+                    prerelease = false,
+                    published_at = "2026-10-01T01:30:00Z",
+                    body = "上游同步版本，不应被采用",
+                    html_url = "https://github.com/zch-soft/QingSnap/releases/tag/v9.9.9",
+                    assets = new[]
                     {
-                        name = "QingSnap-v1.1.0.zip",
-                        browser_download_url = "https://github.com/za5132-web/QingSnap/releases/download/v1.1.0/QingSnap-v1.1.0.zip",
-                        size = 6543210
+                        new
+                        {
+                            name = "QingSnap-v9.9.9.zip",
+                            browser_download_url = "https://github.com/zch-soft/QingSnap/releases/download/v9.9.9/QingSnap-v9.9.9.zip",
+                            size = 100
+                        }
+                    }
+                },
+                new
+                {
+                    tag_name = "zch-v1.1.0",
+                    draft = false,
+                    prerelease = false,
+                    published_at = "2026-09-05T01:30:00Z",
+                    body = $"功能更新\nSHA-256: {hash}",
+                    html_url = "https://github.com/zch-soft/QingSnap/releases/tag/zch-v1.1.0",
+                    assets = new[]
+                    {
+                        new
+                        {
+                            name = "QingSnap(zch)-v1.1.0.zip",
+                            browser_download_url = "https://github.com/zch-soft/QingSnap/releases/download/zch-v1.1.0/QingSnap(zch)-v1.1.0.zip",
+                            size = 6543210
+                        }
                     }
                 }
             });
@@ -70,9 +103,44 @@ public sealed class UpdateServiceTests
 
             Assert.Equal(UpdateCheckStatus.UpdateAvailable, result.Status);
             Assert.NotNull(result.Release);
-            Assert.Equal("v1.1.0", result.Release.TagName);
+            Assert.Equal("zch-v1.1.0", result.Release.TagName);
             Assert.Equal(hash, result.Release.ExpectedSha256);
             Assert.True(result.Release.CanDownload);
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CheckForUpdatesAsync_ReportsUpToDateWhenOnlyLegacyReleasesExist()
+    {
+        var dataDirectory = CreateDataDirectory();
+        try
+        {
+            var payload = JsonSerializer.Serialize(new object[]
+            {
+                new
+                {
+                    tag_name = "v1.1.1",
+                    draft = false,
+                    prerelease = false,
+                    html_url = "https://github.com/zch-soft/QingSnap/releases/tag/v1.1.1",
+                    assets = Array.Empty<object>()
+                }
+            });
+            using var client = new HttpClient(new StubHttpMessageHandler(_ =>
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(payload, Encoding.UTF8, "application/json")
+                }));
+            using var service = new UpdateService(dataDirectory, client, new Version(2, 0, 0));
+
+            var result = await service.CheckForUpdatesAsync(force: true);
+
+            Assert.Equal(UpdateCheckStatus.UpToDate, result.Status);
+            Assert.Null(result.Release);
         }
         finally
         {
