@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Windows;
+using QingSnap.App.Infrastructure;
 using QingSnap.App.Models;
 using MessageBox = System.Windows.MessageBox;
 
@@ -16,11 +17,6 @@ internal static class UninstallRunner
         UninstallService uninstallService)
     {
         var errors = new List<string>();
-
-        if (options.DeleteLogs)
-        {
-            DiagnosticLog.Shutdown();
-        }
 
         if (!options.DeleteSettings)
         {
@@ -53,13 +49,60 @@ internal static class UninstallRunner
         }
 
         var result = uninstallService.Delete(options, settingsService.Current, settingsService.DataDirectory);
-        return result with { Errors = errors.Concat(result.Errors).ToArray() };
+        result = result with { Errors = errors.Concat(result.Errors).ToArray() };
+
+        if (result.Errors.Count == 0)
+        {
+            if (!options.DeleteLogs)
+            {
+                return result;
+            }
+
+            DiagnosticLog.Shutdown();
+            RebootDeletion.ScheduleDirectory(uninstallService.LogDirectory);
+            return result with { LogsScheduled = true };
+        }
+
+        var reportPath = UninstallReport.Write(result, options, uninstallService.LogDirectory);
+        DiagnosticLog.Warning(
+            "Uninstall",
+            $"卸载有 {result.Errors.Count} 项未完成，详情见 {reportPath}。");
+        return result with { ErrorLogPath = reportPath };
     }
 
     public static void ShowSummary(UninstallResult result)
     {
         var executableDirectory = Path.GetDirectoryName(
             Environment.ProcessPath ?? AppContext.BaseDirectory) ?? AppContext.BaseDirectory;
+
+        if (result.ErrorLogPath is { } logPath)
+        {
+            var failure = new StringBuilder();
+            failure.AppendLine("卸载未完全完成，以下项目未能删除：");
+            failure.AppendLine();
+            foreach (var error in result.Errors)
+            {
+                failure.AppendLine($"· {error}");
+            }
+
+            failure.AppendLine();
+            failure.AppendLine($"失败原因已写入日志：{logPath}");
+            failure.AppendLine($"程序文件夹：{executableDirectory}");
+            failure.AppendLine();
+            failure.Append("是否打开日志文件夹？");
+            var openLogs = MessageBox.Show(
+                failure.ToString(),
+                "QingSnap 卸载未完成",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (openLogs == MessageBoxResult.Yes)
+            {
+                OpenInExplorer(logPath, selectFile: true);
+            }
+
+            return;
+        }
+
         var builder = new StringBuilder();
         builder.AppendLine("已从系统中卸载 QingSnap。");
         builder.AppendLine();
@@ -70,14 +113,10 @@ internal static class UninstallRunner
             builder.AppendLine($"已删除 {result.Deleted.Count} 项数据。");
         }
 
-        if (result.Errors.Count > 0)
+        if (result.LogsScheduled)
         {
             builder.AppendLine();
-            builder.AppendLine("以下项目未能完成：");
-            foreach (var error in result.Errors)
-            {
-                builder.AppendLine($"· {error}");
-            }
+            builder.AppendLine("残留日志已标记为重启或下次登录后删除。");
         }
 
         builder.AppendLine();
@@ -87,17 +126,19 @@ internal static class UninstallRunner
             "QingSnap 已卸载",
             MessageBoxButton.YesNo,
             MessageBoxImage.Information);
-        if (openFolder != MessageBoxResult.Yes)
+        if (openFolder == MessageBoxResult.Yes)
         {
-            return;
+            OpenInExplorer(executableDirectory, selectFile: false);
         }
+    }
 
+    private static void OpenInExplorer(string path, bool selectFile)
+    {
         try
         {
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{executableDirectory}\"")
-            {
-                UseShellExecute = true
-            });
+            var startInfo = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
+            startInfo.ArgumentList.Add(selectFile ? $"/select,{path}" : path);
+            Process.Start(startInfo);
         }
         catch (Exception)
         {

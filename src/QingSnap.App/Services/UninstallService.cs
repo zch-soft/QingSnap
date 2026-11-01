@@ -11,7 +11,11 @@ public sealed record UninstallTarget(
     bool CanDelete,
     string? Note);
 
-public sealed record UninstallResult(IReadOnlyList<string> Deleted, IReadOnlyList<string> Errors);
+public sealed record UninstallResult(
+    IReadOnlyList<string> Deleted,
+    IReadOnlyList<string> Errors,
+    string? ErrorLogPath = null,
+    bool LogsScheduled = false);
 
 public sealed class UninstallService
 {
@@ -37,6 +41,8 @@ public sealed class UninstallService
         _logDirectory = Path.GetFullPath(logDirectory ?? Path.Combine(_appDataDirectory, "Logs"));
         _tempDirectory = Path.GetFullPath(tempDirectory ?? Path.GetTempPath());
     }
+
+    public string LogDirectory => _logDirectory;
 
     public IReadOnlyList<UninstallTarget> Describe(AppSettings settings, string dataDirectory)
     {

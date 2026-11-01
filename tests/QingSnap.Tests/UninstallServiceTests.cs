@@ -195,6 +195,27 @@ public sealed class UninstallServiceTests : IDisposable
     }
 
     [Fact]
+    public void UninstallReport_WritesErrorsAndOptions()
+    {
+        var result = new UninstallResult(["deleted-file"], ["boom"]);
+        var path = UninstallReport.Write(
+            result,
+            new UninstallOptions(
+                DeleteHistory: true,
+                DeleteDatabase: false,
+                DeleteSettings: true,
+                DeleteOcr: false,
+                DeleteLogs: true),
+            _logDirectory);
+
+        Assert.True(File.Exists(path));
+        var text = File.ReadAllText(path);
+        Assert.Contains("boom", text);
+        Assert.Contains("history=True", text);
+        Assert.Contains("logs=True", text);
+    }
+
+    [Fact]
     public void Describe_ReportsCategoriesAndHistorySafety()
     {
         var service = NewService();
