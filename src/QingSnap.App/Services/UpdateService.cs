@@ -13,7 +13,7 @@ namespace QingSnap.App.Services;
 
 public sealed partial class UpdateService : IDisposable
 {
-    private const string RepositoryOwner = "za5132-web";
+    private const string RepositoryOwner = "zch-soft";
     private const string RepositoryName = "QingSnap";
     private static readonly Uri LatestReleaseApiUri =
         new($"https://api.github.com/repos/{RepositoryOwner}/{RepositoryName}/releases/latest");
