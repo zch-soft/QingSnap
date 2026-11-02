@@ -1,8 +1,10 @@
 using System.Threading;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using QingSnap.App.Infrastructure;
 using QingSnap.App.Models;
 using QingSnap.App.Services;
 using QingSnap.App.Views;
@@ -193,6 +195,150 @@ public sealed class CaptureOverlayMatrixTests
                     System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
 
                 Assert.Single(window.CreateGlobalSelectionSet()!.Regions);
+            }
+            finally
+            {
+                window.Close();
+            }
+
+            return true;
+        });
+    }
+
+    [Fact]
+    public void CloakedWindowIsSkippedByWindowHitTest()
+    {
+        _ = RunInSta(() =>
+        {
+            EnsureApplicationResources();
+            var window = new Window
+            {
+                Width = 200,
+                Height = 160,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                Topmost = true
+            };
+            window.Show();
+            window.UpdateLayout();
+            var handle = new WindowInteropHelper(window).Handle;
+            try
+            {
+                Assert.True(NativeMethods.GetWindowRect(handle, out var rect));
+                var point = new NativeMethods.NativePoint(
+                    (rect.Left + rect.Right) / 2,
+                    (rect.Top + rect.Bottom) / 2);
+
+                var visibleHit = NativeMethods.FindWindowAtPointExcludingProcess(point, 0);
+                Assert.Equal(handle, NativeMethods.GetAncestor(visibleHit, NativeMethods.GetAncestorRoot));
+
+                Assert.False(NativeMethods.IsWindowCloaked(handle));
+                Assert.True(NativeMethods.SetWindowCloaked(handle, true));
+                Assert.True(NativeMethods.IsWindowCloaked(handle));
+
+                var cloakedHit = NativeMethods.FindWindowAtPointExcludingProcess(point, 0);
+                Assert.NotEqual(handle, NativeMethods.GetAncestor(cloakedHit, NativeMethods.GetAncestorRoot));
+            }
+            finally
+            {
+                NativeMethods.SetWindowCloaked(handle, false);
+                window.Close();
+            }
+
+            return true;
+        });
+    }
+
+    [Fact]
+    public void OpaqueOverlayIsLookedThroughWhenHitTesting()
+    {
+        _ = RunInSta(() =>
+        {
+            EnsureApplicationResources();
+            var target = new Window
+            {
+                Width = 240,
+                Height = 180,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                WindowStartupLocation = WindowStartupLocation.CenterScreen
+            };
+            target.Show();
+            target.UpdateLayout();
+            var targetHandle = new WindowInteropHelper(target).Handle;
+            Assert.True(NativeMethods.GetWindowRect(targetHandle, out var targetRect));
+            var point = new NativeMethods.NativePoint(
+                (targetRect.Left + targetRect.Right) / 2,
+                (targetRect.Top + targetRect.Bottom) / 2);
+
+            var overlay = new Window
+            {
+                Width = 480,
+                Height = 360,
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
+                ShowInTaskbar = false,
+                WindowStartupLocation = WindowStartupLocation.CenterScreen,
+                Topmost = true,
+                Background = Brushes.Black
+            };
+            overlay.Show();
+            overlay.UpdateLayout();
+            var overlayHandle = new WindowInteropHelper(overlay).Handle;
+            try
+            {
+                Assert.True(NativeMethods.GetWindowRect(overlayHandle, out var overlayRect));
+                Assert.True(
+                    point.X >= overlayRect.Left && point.X < overlayRect.Right &&
+                    point.Y >= overlayRect.Top && point.Y < overlayRect.Bottom,
+                    "覆盖层未覆盖测试点。");
+
+                Assert.Equal(
+                    overlayHandle,
+                    NativeMethods.GetAncestor(
+                        NativeMethods.WindowFromPoint(point),
+                        NativeMethods.GetAncestorRoot));
+
+                var hit = NativeMethods.FindWindowAtPointExcludingProcess(point, 0, overlayHandle);
+                Assert.NotEqual(nint.Zero, hit);
+                Assert.NotEqual(
+                    overlayHandle,
+                    NativeMethods.GetAncestor(hit, NativeMethods.GetAncestorRoot));
+            }
+            finally
+            {
+                overlay.Close();
+                target.Close();
+            }
+
+            return true;
+        });
+    }
+
+    [Fact]
+    public void CaptureOverlayIsLayeredSoHitTestingCanLookThrough()
+    {
+        _ = RunInSta(() =>
+        {
+            EnsureApplicationResources();
+            var snapshot = new ScreenSnapshot(
+                new DrawingRectangle(0, 0, 300, 300),
+                CreateImage(300, 300));
+            var window = new CaptureOverlayWindow(
+                snapshot,
+                showActionToolbar: true,
+                settings: new AppSettings());
+            try
+            {
+                window.Width = 300;
+                window.Height = 300;
+                window.Show();
+                window.UpdateLayout();
+                var handle = new WindowInteropHelper(window).Handle;
+                var exStyle = NativeMethods.GetWindowLongPtr(handle, NativeMethods.GwlExStyle).ToInt64();
+                Assert.True(
+                    (exStyle & NativeMethods.WsExLayered) != 0,
+                    "截图覆盖层必须是分层窗口，否则智能选区无法穿透它命中真实窗口。");
             }
             finally
             {

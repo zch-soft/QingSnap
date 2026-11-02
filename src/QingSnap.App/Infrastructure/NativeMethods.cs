@@ -14,12 +14,16 @@ internal static class NativeMethods
     internal const uint InputMouse = 0;
     internal const uint MouseEventWheel = 0x0800;
     internal const uint GetAncestorRoot = 2;
+    internal const uint GwHwndNext = 2;
     internal const int GwlExStyle = -20;
     internal const long WsExTransparent = 0x00000020L;
+    internal const long WsExLayered = 0x00080000L;
     internal const long WsExToolWindow = 0x00000080L;
     internal const long WsExNoActivate = 0x08000000L;
     internal const int WmNcHitTest = 0x0084;
     internal const int DwmWindowAttributeCloak = 13;
+    internal const int DwmWindowAttributeCloaked = 14;
+    internal const uint LwaAlpha = 0x00000002;
     internal const uint IaceDefault = 0x0010;
     private const uint ChildWindowSkipInvisible = 0x0001;
     private const uint ChildWindowSkipDisabled = 0x0002;
@@ -56,7 +60,24 @@ internal static class NativeMethods
         int attributeSize);
 
     [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(
+        nint hWnd,
+        int attribute,
+        out int attributeValue,
+        int attributeSize);
+
+    [DllImport("dwmapi.dll")]
     internal static extern int DwmFlush();
+
+    internal static bool IsWindowCloaked(nint window)
+    {
+        return DwmGetWindowAttribute(
+                   window,
+                   DwmWindowAttributeCloaked,
+                   out var cloaked,
+                   sizeof(int)) >= 0 &&
+               cloaked != 0;
+    }
 
     [DllImport("imm32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -87,7 +108,10 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool EnumWindows(EnumWindowsProcedure callback, nint parameter);
+    private static extern bool GetLayeredWindowAttributes(nint hWnd, out uint colorKey, out byte alpha, out uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetWindow(nint hWnd, uint command);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -209,27 +233,51 @@ internal static class NativeMethods
         }
     }
 
-    internal static nint FindWindowAtPointExcludingProcess(NativePoint screenPoint, uint excludedProcessId)
+    internal static nint FindWindowAtPointExcludingProcess(
+        NativePoint screenPoint,
+        uint excludedProcessId)
     {
-        nint root = nint.Zero;
-        EnumWindows((window, _) =>
+        return FindWindowAtPointExcludingProcess(screenPoint, excludedProcessId, nint.Zero);
+    }
+
+    internal static nint FindWindowAtPointExcludingProcess(
+        NativePoint screenPoint,
+        uint excludedProcessId,
+        nint hitThroughWindow)
+    {
+        // The opaque capture overlay covers the whole screen, so WindowFromPoint would
+        // always return it. Making it transparent for this one synchronous call lets
+        // Windows' own hit test skip cloaked and fully transparent layered windows
+        // (Click to Do, IME/overlay assistants, ...) and pick the window below.
+        var previousStyle = hitThroughWindow == nint.Zero
+            ? 0
+            : GetWindowLongPtr(hitThroughWindow, GwlExStyle).ToInt64();
+        var makeTransparent = hitThroughWindow != nint.Zero &&
+                              (previousStyle & WsExTransparent) == 0;
+        if (makeTransparent)
         {
-            if (!IsWindowVisible(window) || !GetWindowRect(window, out var bounds) ||
-                screenPoint.X < bounds.Left || screenPoint.X >= bounds.Right ||
-                screenPoint.Y < bounds.Top || screenPoint.Y >= bounds.Bottom)
-            {
-                return true;
-            }
+            SetWindowLongPtr(hitThroughWindow, GwlExStyle, (nint)(previousStyle | WsExTransparent));
+        }
 
-            GetWindowThreadProcessId(window, out var processId);
-            if (processId == excludedProcessId)
+        nint root;
+        try
+        {
+            root = WindowFromPoint(screenPoint);
+        }
+        finally
+        {
+            if (makeTransparent)
             {
-                return true;
+                SetWindowLongPtr(hitThroughWindow, GwlExStyle, (nint)previousStyle);
             }
+        }
 
-            root = window;
-            return false;
-        }, nint.Zero);
+        root = root == nint.Zero ? nint.Zero : GetAncestor(root, GetAncestorRoot);
+        while (root != nint.Zero &&
+               !IsSelectableWindowAtPoint(root, screenPoint, excludedProcessId))
+        {
+            root = GetWindow(root, GwHwndNext);
+        }
 
         if (root == nint.Zero)
         {
@@ -260,6 +308,32 @@ internal static class NativeMethods
         return current;
     }
 
+    private static bool IsSelectableWindowAtPoint(
+        nint window,
+        NativePoint screenPoint,
+        uint excludedProcessId)
+    {
+        if (!IsWindowVisible(window) ||
+            IsWindowCloaked(window) ||
+            (GetWindowLongPtr(window, GwlExStyle).ToInt64() & WsExTransparent) != 0 ||
+            !GetWindowRect(window, out var bounds) ||
+            screenPoint.X < bounds.Left || screenPoint.X >= bounds.Right ||
+            screenPoint.Y < bounds.Top || screenPoint.Y >= bounds.Bottom)
+        {
+            return false;
+        }
+
+        GetWindowThreadProcessId(window, out var processId);
+        if (processId == excludedProcessId)
+        {
+            return false;
+        }
+
+        return !(GetLayeredWindowAttributes(window, out _, out var alpha, out var flags) &&
+                 (flags & LwaAlpha) != 0 &&
+                 alpha == 0);
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct NativePoint
     {
@@ -272,8 +346,6 @@ internal static class NativeMethods
             Y = y;
         }
     }
-
-    private delegate bool EnumWindowsProcedure(nint window, nint parameter);
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct NativeRectangle

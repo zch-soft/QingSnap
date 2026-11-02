@@ -4,6 +4,7 @@
         xmlns:icons="clr-namespace:QingSnap.App.Controls"
         Title="QingSnap Capture"
         WindowStyle="None"
+        AllowsTransparency="True"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
         Topmost="True"

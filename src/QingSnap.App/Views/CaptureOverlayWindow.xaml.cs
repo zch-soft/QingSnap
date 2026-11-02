@@ -2681,7 +2681,8 @@ public partial class CaptureOverlayWindow : Window
             new NativeMethods.NativePoint(
                 _snapshot.Bounds.X + (int)Math.Round(point.X * scaleX),
                 _snapshot.Bounds.Y + (int)Math.Round(point.Y * scaleY)),
-            (uint)Environment.ProcessId);
+            (uint)Environment.ProcessId,
+            new WindowInteropHelper(this).Handle);
 
         if (target == nint.Zero || !NativeMethods.GetWindowRect(target, out var windowRect))
         {
