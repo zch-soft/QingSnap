@@ -151,6 +151,58 @@ public sealed class CaptureOverlayMatrixTests
         });
     }
 
+    [Fact]
+    public void SelectionListDeleteRemovesTheClickedSelection()
+    {
+        _ = RunInSta(() =>
+        {
+            EnsureApplicationResources();
+            var snapshot = new ScreenSnapshot(
+                new DrawingRectangle(0, 0, 300, 300),
+                CreateImage(300, 300));
+            var window = new CaptureOverlayWindow(
+                snapshot,
+                showActionToolbar: true,
+                settings: new AppSettings());
+            try
+            {
+                window.Width = 300;
+                window.Height = 300;
+                window.Show();
+                window.UpdateLayout();
+                window.LoadSelectionSet(new SelectionSet(
+                    SelectionMode.Free,
+                    [new CaptureRegion(10, 10, 80, 60), new CaptureRegion(120, 120, 80, 60)]));
+                window.UpdateLayout();
+
+                var rebuild = typeof(CaptureOverlayWindow).GetMethod(
+                    "RebuildSelectionList",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                Assert.NotNull(rebuild);
+                rebuild.Invoke(window, null);
+                window.UpdateLayout();
+
+                var rows = window.SelectionListPanel.Children
+                    .OfType<System.Windows.Controls.DockPanel>()
+                    .ToArray();
+                Assert.Equal(2, rows.Length);
+                var delete = rows[1].Children
+                    .OfType<System.Windows.Controls.Button>()
+                    .Single();
+                delete.RaiseEvent(new RoutedEventArgs(
+                    System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+
+                Assert.Single(window.CreateGlobalSelectionSet()!.Regions);
+            }
+            finally
+            {
+                window.Close();
+            }
+
+            return true;
+        });
+    }
+
     private static T RunInSta<T>(Func<T> action)
     {
         T result = default!;

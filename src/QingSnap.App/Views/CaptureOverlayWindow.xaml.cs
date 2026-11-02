@@ -4134,6 +4134,7 @@ public partial class CaptureOverlayWindow : Window
         SelectionListSummaryText.Text = $"{_selections.Count} 个";
         for (var index = 0; index < _selections.Count; index++)
         {
+            var selectionIndex = index;
             var item = _selections[index];
             var active = index == _activeSelectionIndex;
             var row = new DockPanel
@@ -4155,7 +4156,7 @@ public partial class CaptureOverlayWindow : Window
                 BorderThickness = new Thickness(1),
                 Cursor = WpfCursors.Hand
             };
-            delete.Click += (_, _) => RemoveSelectionAt(index);
+            delete.Click += (_, _) => RemoveSelectionAt(selectionIndex);
             DockPanel.SetDock(delete, Dock.Right);
             row.Children.Add(delete);
 
@@ -4177,12 +4178,12 @@ public partial class CaptureOverlayWindow : Window
                     Foreground = new SolidColorBrush(active
                         ? MediaColor.FromRgb(118, 223, 238)
                         : MediaColor.FromRgb(197, 210, 216)),
-                    Text = $"#{index + 1}   {item.Pixels.Width} × {item.Pixels.Height}   ({item.Pixels.X}, {item.Pixels.Y})"
+                    Text = $"#{selectionIndex + 1}   {item.Pixels.Width} × {item.Pixels.Height}   ({item.Pixels.X}, {item.Pixels.Y})"
                 }
             };
             activate.MouseLeftButtonDown += (_, args) =>
             {
-                ActivateSelection(index);
+                ActivateSelection(selectionIndex);
                 args.Handled = true;
             };
             row.Children.Add(activate);
