@@ -51,6 +51,13 @@ public partial class CaptureOverlayWindow : Window
     {
         Interval = TimeSpan.FromMilliseconds(180)
     };
+    private readonly DispatcherTimer _smartPreviewProbeTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(120)
+    };
+    private int _smartPreviewProbeX;
+    private int _smartPreviewProbeY;
+    private Point _smartPreviewProbePoint;
     private CancellationTokenSource? _ocrPrefetchCancellation;
     private CancellationTokenSource? _qrCodeCancellation;
     private Task<OcrRecognitionResult>? _prefetchedOcrTask;
@@ -187,6 +194,7 @@ public partial class CaptureOverlayWindow : Window
             AdjustmentBadge.Visibility = Visibility.Collapsed;
         };
         _ocrPrefetchTimer.Tick += OnOcrPrefetchTimerTick;
+        _smartPreviewProbeTimer.Tick += OnSmartPreviewProbeTick;
         QrCodeHotspotLayer.ResultInvoked += OnQrCodeHotspotInvoked;
 
         BackgroundImage.Source = snapshot.Image;
@@ -232,6 +240,7 @@ public partial class CaptureOverlayWindow : Window
         Closed += (_, _) =>
         {
             _adjustmentBadgeTimer.Stop();
+            _smartPreviewProbeTimer.Stop();
             CancelOcrPrefetch();
             CancelQrCodeRecognition(clearResults: false);
             ResourceDiagnostics.Sample("CaptureClosed");
@@ -2677,15 +2686,18 @@ public partial class CaptureOverlayWindow : Window
     {
         var scaleX = _snapshot.Bounds.Width / Math.Max(1, Surface.ActualWidth);
         var scaleY = _snapshot.Bounds.Height / Math.Max(1, Surface.ActualHeight);
+        var physicalX = _snapshot.Bounds.X + (int)Math.Round(point.X * scaleX);
+        var physicalY = _snapshot.Bounds.Y + (int)Math.Round(point.Y * scaleY);
+        var overlayHandle = new WindowInteropHelper(this).Handle;
+
         var target = NativeMethods.FindWindowAtPointExcludingProcess(
-            new NativeMethods.NativePoint(
-                _snapshot.Bounds.X + (int)Math.Round(point.X * scaleX),
-                _snapshot.Bounds.Y + (int)Math.Round(point.Y * scaleY)),
+            new NativeMethods.NativePoint(physicalX, physicalY),
             (uint)Environment.ProcessId,
-            new WindowInteropHelper(this).Handle);
+            overlayHandle);
 
         if (target == nint.Zero || !NativeMethods.GetWindowRect(target, out var windowRect))
         {
+            _smartPreviewProbeTimer.Stop();
             ClearSmartPreview();
             return;
         }
@@ -2693,18 +2705,75 @@ public partial class CaptureOverlayWindow : Window
         NativeMethods.GetWindowThreadProcessId(target, out var processId);
         if (processId == Environment.ProcessId)
         {
+            _smartPreviewProbeTimer.Stop();
             ClearSmartPreview();
             return;
         }
 
-        var leftPx = Math.Max(windowRect.Left, _snapshot.Bounds.Left);
-        var topPx = Math.Max(windowRect.Top, _snapshot.Bounds.Top);
-        var rightPx = Math.Min(windowRect.Right, _snapshot.Bounds.Right);
-        var bottomPx = Math.Min(windowRect.Bottom, _snapshot.Bounds.Bottom);
-        if (rightPx - leftPx < 20 || bottomPx - topPx < 20)
+        if (!ApplySmartPreviewBounds(windowRect))
         {
+            _smartPreviewProbeTimer.Stop();
             ClearSmartPreview();
             return;
+        }
+
+        _smartPreviewProbeX = physicalX;
+        _smartPreviewProbeY = physicalY;
+        _smartPreviewProbePoint = point;
+        _smartPreviewProbeTimer.Stop();
+        _smartPreviewProbeTimer.Start();
+    }
+
+    private void OnSmartPreviewProbeTick(object? sender, EventArgs e)
+    {
+        _smartPreviewProbeTimer.Stop();
+        var pointer = ClampPoint(Mouse.GetPosition(Surface));
+        if (_smartPreview.IsEmpty ||
+            (pointer - _smartPreviewProbePoint).Length > 2 ||
+            FindSelectionAt(pointer) >= 0)
+        {
+            return;
+        }
+
+        if (!_settings.SmartWindowSelection ||
+            _dragMode != DragMode.None ||
+            _isAnnotating ||
+            _annotationController.ActiveTool != CaptureAnnotationTool.None ||
+            CaptureToolbar.IsMouseOver ||
+            QuickTagPopup.IsOpen ||
+            SelectionListPopup.IsOpen ||
+            Mouse.LeftButton == MouseButtonState.Pressed ||
+            Mouse.RightButton == MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        if (UiAutomationWindowProbe.GetDockedPaneAtPoint(
+                _smartPreviewProbeX,
+                _smartPreviewProbeY,
+                new WindowInteropHelper(this).Handle) is not { } paneBounds)
+        {
+            return;
+        }
+
+        ApplySmartPreviewBounds(new NativeMethods.NativeRectangle
+        {
+            Left = (int)Math.Round(paneBounds.Left),
+            Top = (int)Math.Round(paneBounds.Top),
+            Right = (int)Math.Round(paneBounds.Right),
+            Bottom = (int)Math.Round(paneBounds.Bottom)
+        });
+    }
+
+    private bool ApplySmartPreviewBounds(NativeMethods.NativeRectangle bounds)
+    {
+        var leftPx = Math.Max(bounds.Left, _snapshot.Bounds.Left);
+        var topPx = Math.Max(bounds.Top, _snapshot.Bounds.Top);
+        var rightPx = Math.Min(bounds.Right, _snapshot.Bounds.Right);
+        var bottomPx = Math.Min(bounds.Bottom, _snapshot.Bounds.Bottom);
+        if (rightPx - leftPx < 20 || bottomPx - topPx < 20)
+        {
+            return false;
         }
 
         var toDipX = Surface.ActualWidth / Math.Max(1, _snapshot.Bounds.Width);
@@ -2716,11 +2785,12 @@ public partial class CaptureOverlayWindow : Window
             (bottomPx - topPx) * toDipY);
         if (_smartPreview == preview && SmartPreviewBorder.Visibility == Visibility.Visible)
         {
-            return;
+            return true;
         }
 
         _smartPreview = preview;
         ShowSmartPreview(preview);
+        return true;
     }
 
     private void ShowSmartPreview(WpfRect rect)
