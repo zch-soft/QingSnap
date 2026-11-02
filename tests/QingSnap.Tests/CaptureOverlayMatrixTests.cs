@@ -104,6 +104,53 @@ public sealed class CaptureOverlayMatrixTests
                 "QingSnap", index, free.Images.Count, free.Matrix, free.Cells, ".png")));
     }
 
+    [Fact]
+    public void SmartPreviewKeepsShadeAndToolbarWhileSelectionExists()
+    {
+        _ = RunInSta(() =>
+        {
+            EnsureApplicationResources();
+            var snapshot = new ScreenSnapshot(
+                new DrawingRectangle(100, 50, 300, 300),
+                CreateImage(300, 300));
+            var window = new CaptureOverlayWindow(
+                snapshot,
+                showActionToolbar: true,
+                settings: new AppSettings());
+            try
+            {
+                window.Width = 300;
+                window.Height = 300;
+                window.Show();
+                window.UpdateLayout();
+                window.LoadSelectionSet(SelectionSet.Single(new CaptureRegion(10, 10, 100, 60)));
+                window.UpdateLayout();
+
+                var showSmartPreview = typeof(CaptureOverlayWindow).GetMethod(
+                    "ShowSmartPreview",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                Assert.NotNull(showSmartPreview);
+                var scale = window.Surface.ActualWidth / 300.0;
+                Assert.True(scale > 0, "覆盖层画布尺寸无效。");
+                showSmartPreview.Invoke(window, [new Rect(150 * scale, 150 * scale, 120 * scale, 100 * scale)]);
+                window.UpdateLayout();
+
+                var mask = window.ShadeMask.Data;
+                Assert.False(mask.FillContains(new Point(50 * scale, 50 * scale)), "选区内应保持明亮。");
+                Assert.True(mask.FillContains(new Point(5 * scale, 5 * scale)), "选区外的蒙版不应被窗口预览擦掉。");
+                Assert.True(mask.FillContains(new Point(200 * scale, 200 * scale)), "预览区域不应在已有选区时挖洞。");
+                Assert.Equal(Visibility.Visible, window.CaptureToolbar.Visibility);
+                Assert.Equal(70 * scale + 6, System.Windows.Controls.Canvas.GetTop(window.CaptureToolbar), 3);
+            }
+            finally
+            {
+                window.Close();
+            }
+
+            return true;
+        });
+    }
+
     private static T RunInSta<T>(Func<T> action)
     {
         T result = default!;

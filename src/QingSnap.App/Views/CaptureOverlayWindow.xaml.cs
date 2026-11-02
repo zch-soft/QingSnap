@@ -2496,7 +2496,8 @@ public partial class CaptureOverlayWindow : Window
             holes.Children.Add(geometry);
         }
 
-        if (!_smartPreview.IsEmpty)
+        // 已有选区时遮罩只按选区挖洞，鼠标移出选区后的窗口预览不得让非选区变亮。
+        if (_selections.Count == 0 && !_smartPreview.IsEmpty)
         {
             var preview = new RectangleGeometry(_smartPreview);
             preview.Freeze();
@@ -2728,16 +2729,18 @@ public partial class CaptureOverlayWindow : Window
         SetPosition(SmartPreviewBorder, rect.Left, rect.Top);
         SmartPreviewBorder.Width = rect.Width;
         SmartPreviewBorder.Height = rect.Height;
-        UpdateShadeMask();
-        UpdateSizeBadge(rect, CaptureRegion.FromRectangle(ToPhysicalRectangle(rect)), isPreview: true);
-        CaptureToolbar.Visibility = Visibility.Collapsed;
-        QuickTagButton.Visibility = Visibility.Collapsed;
-        QuickTagPopup.IsOpen = false;
-        SelectionListPopup.IsOpen = false;
-        HintBadge.Visibility = Visibility.Collapsed;
-        foreach (var mark in _cornerMarks)
+
+        // 已有选区时只显示预览边框，尺寸徽标、工具栏和手柄仍以实际选区为准，
+        // 否则鼠标离开选区移向工具栏时工具栏会被收起。
+        if (_selections.Count == 0)
         {
-            mark.Visibility = Visibility.Collapsed;
+            UpdateShadeMask();
+            UpdateSizeBadge(rect, CaptureRegion.FromRectangle(ToPhysicalRectangle(rect)), isPreview: true);
+            HintBadge.Visibility = Visibility.Collapsed;
+            foreach (var mark in _cornerMarks)
+            {
+                mark.Visibility = Visibility.Collapsed;
+            }
         }
     }
 
@@ -2971,10 +2974,10 @@ public partial class CaptureOverlayWindow : Window
             rect.Right - toolbarWidth,
             10,
             Math.Max(10, Surface.ActualWidth - toolbarWidth - 10));
-        var top = rect.Bottom + 10;
+        var top = rect.Bottom + 6;
         if (top + toolbarHeight > Surface.ActualHeight - 10)
         {
-            top = rect.Top - toolbarHeight - 10;
+            top = rect.Top - toolbarHeight - 6;
         }
 
         top = Math.Clamp(top, 10, Math.Max(10, Surface.ActualHeight - toolbarHeight - 10));
