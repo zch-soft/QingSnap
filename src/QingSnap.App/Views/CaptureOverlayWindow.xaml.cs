@@ -55,9 +55,6 @@ public partial class CaptureOverlayWindow : Window
     {
         Interval = TimeSpan.FromMilliseconds(120)
     };
-    private int _smartPreviewProbeX;
-    private int _smartPreviewProbeY;
-    private Point _smartPreviewProbePoint;
     private CancellationTokenSource? _ocrPrefetchCancellation;
     private CancellationTokenSource? _qrCodeCancellation;
     private Task<OcrRecognitionResult>? _prefetchedOcrTask;
@@ -2717,20 +2714,17 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
-        _smartPreviewProbeX = physicalX;
-        _smartPreviewProbeY = physicalY;
-        _smartPreviewProbePoint = point;
-        _smartPreviewProbeTimer.Stop();
-        _smartPreviewProbeTimer.Start();
+        if (!_smartPreviewProbeTimer.IsEnabled)
+        {
+            _smartPreviewProbeTimer.Start();
+        }
     }
 
     private void OnSmartPreviewProbeTick(object? sender, EventArgs e)
     {
         _smartPreviewProbeTimer.Stop();
         var pointer = ClampPoint(Mouse.GetPosition(Surface));
-        if (_smartPreview.IsEmpty ||
-            (pointer - _smartPreviewProbePoint).Length > 2 ||
-            FindSelectionAt(pointer) >= 0)
+        if (_smartPreview.IsEmpty || FindSelectionAt(pointer) >= 0)
         {
             return;
         }
@@ -2748,9 +2742,13 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
+        var scaleX = _snapshot.Bounds.Width / Math.Max(1, Surface.ActualWidth);
+        var scaleY = _snapshot.Bounds.Height / Math.Max(1, Surface.ActualHeight);
+        var physicalX = _snapshot.Bounds.X + (int)Math.Round(pointer.X * scaleX);
+        var physicalY = _snapshot.Bounds.Y + (int)Math.Round(pointer.Y * scaleY);
         if (UiAutomationWindowProbe.GetDockedPaneAtPoint(
-                _smartPreviewProbeX,
-                _smartPreviewProbeY,
+                physicalX,
+                physicalY,
                 new WindowInteropHelper(this).Handle) is not { } paneBounds)
         {
             return;
