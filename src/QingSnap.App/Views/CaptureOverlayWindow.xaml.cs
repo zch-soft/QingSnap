@@ -2776,14 +2776,12 @@ public partial class CaptureOverlayWindow : Window
         var scaleY = _snapshot.Bounds.Height / Math.Max(1, Surface.ActualHeight);
         var physicalX = _snapshot.Bounds.X + (int)Math.Round(pointer.X * scaleX);
         var physicalY = _snapshot.Bounds.Y + (int)Math.Round(pointer.Y * scaleY);
-        var dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleY;
         if (UiAutomationWindowProbe.GetPreviewOverrideAtPoint(
                 physicalX,
                 physicalY,
                 new WindowInteropHelper(this).Handle,
                 _smartPreviewFallbackWindow,
-                allowDockPane: !_smartPreviewOverChildWindow,
-                dpiScale) is not { } target)
+                allowDockPane: !_smartPreviewOverChildWindow) is not { } target)
         {
             return false;
         }

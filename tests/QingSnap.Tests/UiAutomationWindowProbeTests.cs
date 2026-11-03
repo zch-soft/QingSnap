@@ -144,21 +144,4 @@ public sealed class UiAutomationWindowProbeTests
         Assert.False(target.Value.IsDockPane);
     }
 
-    [Fact]
-    public void SolutionExplorerHeuristicSplitsTitleToolbarAndContent()
-    {
-        var pane = new Rect(47, 153, 529, 1330);
-
-        var title = UiAutomationWindowProbe.SplitSolutionExplorer(pane, 160, 1);
-        Assert.True(title.IsDockPane);
-        Assert.Equal(pane, title.Bounds);
-
-        var toolbar = UiAutomationWindowProbe.SplitSolutionExplorer(pane, 200, 1);
-        Assert.False(toolbar.IsDockPane);
-        Assert.Equal(new Rect(47, 176, 529, 54), toolbar.Bounds);
-
-        var content = UiAutomationWindowProbe.SplitSolutionExplorer(pane, 600, 1);
-        Assert.False(content.IsDockPane);
-        Assert.Equal(new Rect(47, 230, 529, 1253), content.Bounds);
-    }
 }

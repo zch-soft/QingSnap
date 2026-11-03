@@ -22,8 +22,6 @@ internal static class UiAutomationWindowProbe
     private const int MaxAncestorDepth = 22;
     private const int MaxVisitedElements = 140;
     private const long FallbackThrottleMilliseconds = 400;
-    private const double SolutionExplorerTitleHeight = 23;
-    private const double SolutionExplorerToolbarHeight = 54;
     private static long _lastFallbackTick;
 
     private static readonly HashSet<string> DockedPaneClassNames = new(StringComparer.Ordinal)
@@ -119,8 +117,7 @@ internal static class UiAutomationWindowProbe
         int screenY,
         nint hitThroughWindow,
         nint fallbackTopLevelWindow,
-        bool allowDockPane,
-        double dpiScale)
+        bool allowDockPane)
     {
         var previousStyle = hitThroughWindow == nint.Zero
             ? 0
@@ -201,8 +198,7 @@ internal static class UiAutomationWindowProbe
                 fallbackTopLevelWindow,
                 screenX,
                 screenY,
-                allowDockPane,
-                dpiScale);
+                allowDockPane);
         }
 
         return null;
@@ -212,8 +208,7 @@ internal static class UiAutomationWindowProbe
         nint topLevelWindow,
         double x,
         double y,
-        bool allowDockPane,
-        double dpiScale)
+        bool allowDockPane)
     {
         AutomationElement? element;
         try
@@ -228,7 +223,6 @@ internal static class UiAutomationWindowProbe
         WpfRect? pane = null;
         WpfRect? toolbar = null;
         WpfRect? section = null;
-        var paneName = string.Empty;
         var visited = 0;
         Search(element, 0);
 
@@ -244,11 +238,6 @@ internal static class UiAutomationWindowProbe
 
         if (pane is { } paneBounds)
         {
-            if (string.Equals(paneName, "Solution Explorer", StringComparison.Ordinal) && dpiScale > 0)
-            {
-                return SplitSolutionExplorer(paneBounds, y, dpiScale);
-            }
-
             if (allowDockPane)
             {
                 return new PreviewOverride(paneBounds, IsDockPane: true);
@@ -300,7 +289,6 @@ internal static class UiAutomationWindowProbe
                 HasArea(bounds))
             {
                 pane = bounds;
-                paneName = current.Name;
             }
 
             AutomationElement? child;
@@ -331,30 +319,6 @@ internal static class UiAutomationWindowProbe
                 }
             }
         }
-    }
-
-    internal static PreviewOverride SplitSolutionExplorer(WpfRect pane, double y, double dpiScale)
-    {
-        // VS does not expose the Solution Explorer content to UIA in every state,
-        // so fall back to its fixed title/toolbar/content bands.
-        var titleHeight = SolutionExplorerTitleHeight * dpiScale;
-        var toolbarHeight = SolutionExplorerToolbarHeight * dpiScale;
-        if (y < pane.Top + titleHeight)
-        {
-            return new PreviewOverride(pane, IsDockPane: true);
-        }
-
-        if (y < pane.Top + titleHeight + toolbarHeight)
-        {
-            return new PreviewOverride(
-                new WpfRect(pane.Left, pane.Top + titleHeight, pane.Width, toolbarHeight),
-                IsDockPane: false);
-        }
-
-        var contentTop = pane.Top + titleHeight + toolbarHeight;
-        return new PreviewOverride(
-            new WpfRect(pane.Left, contentTop, pane.Width, pane.Bottom - contentTop),
-            IsDockPane: false);
     }
 
     private static bool IsDockedPane(string controlTypeName, string className)
