@@ -81,4 +81,47 @@ public sealed class UiAutomationWindowProbeTests
 
         Assert.Equal(new Rect(0, 0, 100, 100), pane);
     }
+
+    [Fact]
+    public void ToolbarWinsOverPaneWhenPointerIsOverToolbar()
+    {
+        var chain = new[]
+        {
+            Node("ControlType.ComboBox", "ComboBox", 1090, 55, 195, 35),
+            Node("ControlType.ToolBar", "ToolBar", 14, 51, 1389, 42),
+            Node("ControlType.Pane", "ToolBarDockTop", 14, 51, 2318, 84),
+            Node("ControlType.Window", "Window", 0, 0, 2560, 1600)
+        };
+
+        var target = UiAutomationWindowProbe.SelectTarget(chain);
+
+        Assert.Equal(new Rect(14, 51, 1389, 42), target);
+    }
+
+    [Fact]
+    public void PaneIsUsedWhenNoToolbarIsUnderPointer()
+    {
+        var chain = new[]
+        {
+            Node("ControlType.Pane", "GenericPane", 1465, 228, 576, 956),
+            Node("ControlType.Pane", "ViewPresenter", 1463, 153, 580, 1033),
+            Node("ControlType.Window", "Window", 0, 0, 2560, 1600)
+        };
+
+        var target = UiAutomationWindowProbe.SelectTarget(chain);
+
+        Assert.Equal(new Rect(1463, 153, 580, 1033), target);
+    }
+
+    [Fact]
+    public void NoTargetForPlainWindowContent()
+    {
+        var chain = new[]
+        {
+            Node("ControlType.Document", "Editor", 0, 100, 1200, 800),
+            Node("ControlType.Window", "Window", 0, 0, 2560, 1600)
+        };
+
+        Assert.Null(UiAutomationWindowProbe.SelectTarget(chain));
+    }
 }

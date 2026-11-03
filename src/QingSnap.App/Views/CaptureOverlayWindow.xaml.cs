@@ -68,7 +68,9 @@ public partial class CaptureOverlayWindow : Window
     private DragMode _dragMode;
     private bool _isAnnotating;
     private WpfRect _smartPreview = WpfRect.Empty;
-    private bool _smartPreviewIsDockedPane;
+    private bool _smartPreviewIsElementOverride;
+    private bool _smartPreviewOverChildWindow;
+    private nint _smartPreviewFallbackWindow;
     private WpfRect _pendingSmartSelection = WpfRect.Empty;
     private bool _dragMoved;
     private MediaColor _currentPixelColor;
@@ -437,7 +439,7 @@ public partial class CaptureOverlayWindow : Window
             // Adopt the preview immediately so a normal click cannot collapse into a
             // one-pixel drag if Windows delivers a synthetic move between down/up.
             // A deliberate drag still switches back to free-form selection below.
-            TryRefineSmartPreviewToDockedPane(point);
+            TryRefineSmartPreviewToElement(point);
             _pendingSmartSelection = _smartPreview;
             BeginNewSelection(_smartPreview);
             _dragCreatedSelection = true;
@@ -1427,7 +1429,7 @@ public partial class CaptureOverlayWindow : Window
     {
         CancelQrCodeRecognition(clearResults: true);
         _smartPreview = WpfRect.Empty;
-        _smartPreviewIsDockedPane = false;
+        _smartPreviewIsElementOverride = false;
         SmartPreviewBorder.Visibility = Visibility.Collapsed;
 
         var item = ActiveSelection;
@@ -2684,13 +2686,6 @@ public partial class CaptureOverlayWindow : Window
 
     private void UpdateSmartPreview(Point point)
     {
-        if (_smartPreviewIsDockedPane && _smartPreview.Contains(point))
-        {
-            // Keep the refined pane rect instead of letting the next tiny mouse move
-            // fall back to the inner HwndHost content window.
-            return;
-        }
-
         var scaleX = _snapshot.Bounds.Width / Math.Max(1, Surface.ActualWidth);
         var scaleY = _snapshot.Bounds.Height / Math.Max(1, Surface.ActualHeight);
         var physicalX = _snapshot.Bounds.X + (int)Math.Round(point.X * scaleX);
@@ -2717,6 +2712,17 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
+        _smartPreviewFallbackWindow = NativeMethods.GetAncestor(target, NativeMethods.GetAncestorRoot);
+        _smartPreviewOverChildWindow = target != _smartPreviewFallbackWindow;
+        if (_smartPreviewIsElementOverride &&
+            _smartPreview.Contains(point) &&
+            !_smartPreviewOverChildWindow)
+        {
+            // Stay on the refined element while the pointer is over its chrome; a
+            // child window under the pointer (content/toolbar) must win instead.
+            return;
+        }
+
         if (!ApplySmartPreviewBounds(windowRect))
         {
             _smartPreviewProbeTimer.Stop();
@@ -2734,6 +2740,13 @@ public partial class CaptureOverlayWindow : Window
     {
         _smartPreviewProbeTimer.Stop();
         var pointer = ClampPoint(Mouse.GetPosition(Surface));
+        if (_smartPreviewIsElementOverride &&
+            _smartPreview.Contains(pointer) &&
+            !_smartPreviewOverChildWindow)
+        {
+            return;
+        }
+
         if (_smartPreview.IsEmpty || FindSelectionAt(pointer) >= 0)
         {
             return;
@@ -2752,19 +2765,27 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
-        TryRefineSmartPreviewToDockedPane(pointer);
+        TryRefineSmartPreviewToElement(pointer);
     }
 
-    private bool TryRefineSmartPreviewToDockedPane(Point pointer)
+    private bool TryRefineSmartPreviewToElement(Point pointer)
     {
+        if (_smartPreviewOverChildWindow)
+        {
+            // The pointer is over an inner child window (content or toolbar); keep
+            // that window instead of expanding to the whole dock pane.
+            return false;
+        }
+
         var scaleX = _snapshot.Bounds.Width / Math.Max(1, Surface.ActualWidth);
         var scaleY = _snapshot.Bounds.Height / Math.Max(1, Surface.ActualHeight);
         var physicalX = _snapshot.Bounds.X + (int)Math.Round(pointer.X * scaleX);
         var physicalY = _snapshot.Bounds.Y + (int)Math.Round(pointer.Y * scaleY);
-        if (UiAutomationWindowProbe.GetDockedPaneAtPoint(
+        if (UiAutomationWindowProbe.GetPreviewOverrideAtPoint(
                 physicalX,
                 physicalY,
-                new WindowInteropHelper(this).Handle) is not { } paneBounds)
+                new WindowInteropHelper(this).Handle,
+                _smartPreviewFallbackWindow) is not { } overrideBounds)
         {
             return false;
         }
@@ -2772,17 +2793,17 @@ public partial class CaptureOverlayWindow : Window
         return ApplySmartPreviewBounds(
             new NativeMethods.NativeRectangle
             {
-                Left = (int)Math.Round(paneBounds.Left),
-                Top = (int)Math.Round(paneBounds.Top),
-                Right = (int)Math.Round(paneBounds.Right),
-                Bottom = (int)Math.Round(paneBounds.Bottom)
+                Left = (int)Math.Round(overrideBounds.Left),
+                Top = (int)Math.Round(overrideBounds.Top),
+                Right = (int)Math.Round(overrideBounds.Right),
+                Bottom = (int)Math.Round(overrideBounds.Bottom)
             },
-            isDockedPane: true);
+            isElementOverride: true);
     }
 
     private bool ApplySmartPreviewBounds(
         NativeMethods.NativeRectangle bounds,
-        bool isDockedPane = false)
+        bool isElementOverride = false)
     {
         var leftPx = Math.Max(bounds.Left, _snapshot.Bounds.Left);
         var topPx = Math.Max(bounds.Top, _snapshot.Bounds.Top);
@@ -2802,12 +2823,12 @@ public partial class CaptureOverlayWindow : Window
             (bottomPx - topPx) * toDipY);
         if (_smartPreview == preview && SmartPreviewBorder.Visibility == Visibility.Visible)
         {
-            _smartPreviewIsDockedPane |= isDockedPane;
+            _smartPreviewIsElementOverride |= isElementOverride;
             return true;
         }
 
         _smartPreview = preview;
-        _smartPreviewIsDockedPane = isDockedPane;
+        _smartPreviewIsElementOverride = isElementOverride;
         ShowSmartPreview(preview);
         return true;
     }
@@ -2842,7 +2863,7 @@ public partial class CaptureOverlayWindow : Window
         }
 
         _smartPreview = WpfRect.Empty;
-        _smartPreviewIsDockedPane = false;
+        _smartPreviewIsElementOverride = false;
         SmartPreviewBorder.Visibility = Visibility.Collapsed;
         UpdateShadeMask();
         if (ActiveSelection is not null)
@@ -2924,7 +2945,7 @@ public partial class CaptureOverlayWindow : Window
         _annotationController.SetBounds(WpfRect.Empty, Surface.ActualWidth, Surface.ActualHeight);
         ClearMatrix();
         _smartPreview = WpfRect.Empty;
-        _smartPreviewIsDockedPane = false;
+        _smartPreviewIsElementOverride = false;
         _lockedSelectionSize = null;
         UpdateFixedSizeUi();
         SelectionBorder.Visibility = Visibility.Collapsed;
