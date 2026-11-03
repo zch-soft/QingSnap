@@ -2777,10 +2777,9 @@ public partial class CaptureOverlayWindow : Window
         var physicalX = _snapshot.Bounds.X + (int)Math.Round(pointer.X * scaleX);
         var physicalY = _snapshot.Bounds.Y + (int)Math.Round(pointer.Y * scaleY);
         if (UiAutomationWindowProbe.GetPreviewOverrideAtPoint(
+                _smartPreviewFallbackWindow,
                 physicalX,
                 physicalY,
-                new WindowInteropHelper(this).Handle,
-                _smartPreviewFallbackWindow,
                 allowDockPane: !_smartPreviewOverChildWindow) is not { } target)
         {
             return false;

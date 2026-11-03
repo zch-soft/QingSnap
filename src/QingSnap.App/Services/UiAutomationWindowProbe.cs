@@ -1,207 +1,46 @@
 using System.Windows.Automation;
-using QingSnap.App.Infrastructure;
-using WpfPoint = System.Windows.Point;
 using WpfRect = System.Windows.Rect;
 
 namespace QingSnap.App.Services;
 
-internal readonly record struct UiAutomationNode(
-    string ControlTypeName,
-    string ClassName,
-    WpfRect Bounds);
-
 internal readonly record struct PreviewOverride(WpfRect Bounds, bool IsDockPane);
 
 /// <summary>
-/// Resolves UIA elements that have no HWND of their own, such as Visual
-/// Studio's toolbars, docked tool window panes (ViewPresenter /
-/// ToolWindowTabGroupContainer) and their content sections.
+/// Resolves UIA elements that have no HWND of their own: toolbars, dock window
+/// panes (a Pane with a title/tab child) and large content sections inside them.
+/// The rules only use UIA control types, geometry and element hierarchy.
 /// </summary>
 internal static class UiAutomationWindowProbe
 {
-    private const int MaxAncestorDepth = 22;
-    private const int MaxVisitedElements = 140;
-    private const long FallbackThrottleMilliseconds = 400;
-    private static long _lastFallbackTick;
-
-    private static readonly HashSet<string> DockedPaneClassNames = new(StringComparer.Ordinal)
-    {
-        "ViewPresenter",
-        "ToolWindowTabGroupContainer"
-    };
-
-    private static readonly HashSet<string> SectionClassNames = new(StringComparer.Ordinal)
-    {
-        "ScriptedControl",
-        "TabControl",
-        "TreeView"
-    };
-
-    internal static PreviewOverride? SelectTarget(
-        IReadOnlyList<UiAutomationNode> chain,
-        bool allowDockPane)
-    {
-        if (SelectToolbar(chain) is { } toolbar)
-        {
-            return new PreviewOverride(toolbar, IsDockPane: false);
-        }
-
-        if (SelectSection(chain) is { } section)
-        {
-            return new PreviewOverride(section, IsDockPane: false);
-        }
-
-        return allowDockPane && SelectDockedPane(chain) is { } pane
-            ? new PreviewOverride(pane, IsDockPane: true)
-            : null;
-    }
-
-    internal static WpfRect? SelectDockedPane(IReadOnlyList<UiAutomationNode> chain)
-    {
-        WpfRect? match = null;
-        foreach (var node in chain)
-        {
-            if (node.ControlTypeName == "ControlType.Window")
-            {
-                break;
-            }
-
-            if (IsDockedPane(node.ControlTypeName, node.ClassName) && HasArea(node.Bounds))
-            {
-                // Keep the outermost match so a pane group wins over its inner presenter.
-                match = node.Bounds;
-            }
-        }
-
-        return match;
-    }
-
-    internal static WpfRect? SelectToolbar(IReadOnlyList<UiAutomationNode> chain)
-    {
-        foreach (var node in chain)
-        {
-            if (node.ControlTypeName == "ControlType.Window")
-            {
-                break;
-            }
-
-            if (IsToolbar(node.ControlTypeName, node.ClassName) && HasArea(node.Bounds))
-            {
-                return node.Bounds;
-            }
-        }
-
-        return null;
-    }
-
-    internal static WpfRect? SelectSection(IReadOnlyList<UiAutomationNode> chain)
-    {
-        foreach (var node in chain)
-        {
-            if (node.ControlTypeName == "ControlType.Window")
-            {
-                break;
-            }
-
-            if (IsSection(node.ControlTypeName, node.ClassName) && HasArea(node.Bounds))
-            {
-                return node.Bounds;
-            }
-        }
-
-        return null;
-    }
+    private const int MaxDepth = 22;
+    private const int MaxVisitedElements = 400;
+    private const long QueryThrottleMilliseconds = 400;
+    private const double SectionAreaRatio = 0.35;
+    private const double SectionMaxAreaRatio = 0.90;
+    private const double ToolbarMaxHeightRatio = 0.08;
+    private const double ToolbarMinWidthRatio = 0.70;
+    private const double ToolbarTopRatio = 0.08;
+    private static long _lastQueryTick;
 
     internal static PreviewOverride? GetPreviewOverrideAtPoint(
+        nint topLevelWindow,
         int screenX,
         int screenY,
-        nint hitThroughWindow,
-        nint fallbackTopLevelWindow,
         bool allowDockPane)
     {
-        var previousStyle = hitThroughWindow == nint.Zero
-            ? 0
-            : NativeMethods.GetWindowLongPtr(hitThroughWindow, NativeMethods.GwlExStyle).ToInt64();
-        var madeTransparent = hitThroughWindow != nint.Zero &&
-                              (previousStyle & NativeMethods.WsExTransparent) == 0;
-        AutomationElement? element;
-        try
+        if (topLevelWindow == nint.Zero)
         {
-            if (madeTransparent)
-            {
-                NativeMethods.SetWindowLongPtr(
-                    hitThroughWindow,
-                    NativeMethods.GwlExStyle,
-                    (nint)(previousStyle | NativeMethods.WsExTransparent));
-            }
-
-            element = AutomationElement.FromPoint(new WpfPoint(screenX, screenY));
-        }
-        catch (Exception)
-        {
-            // UIA providers of third-party apps can fail or go away mid-query.
             return null;
         }
-        finally
+
+        var now = Environment.TickCount64;
+        if (now - _lastQueryTick < QueryThrottleMilliseconds)
         {
-            if (madeTransparent)
-            {
-                NativeMethods.SetWindowLongPtr(
-                    hitThroughWindow,
-                    NativeMethods.GwlExStyle,
-                    (nint)previousStyle);
-            }
+            return null;
         }
 
-        if (element is not null)
-        {
-            var chain = new List<UiAutomationNode>(MaxAncestorDepth);
-            try
-            {
-                for (var depth = 0; depth < MaxAncestorDepth && element is not null; depth++)
-                {
-                    var current = element.Current;
-                    chain.Add(new UiAutomationNode(
-                        current.ControlType.ProgrammaticName,
-                        current.ClassName,
-                        current.BoundingRectangle));
-                    if (current.ControlType == ControlType.Window)
-                    {
-                        break;
-                    }
-
-                    element = TreeWalker.ControlViewWalker.GetParent(element);
-                    if (element == AutomationElement.RootElement)
-                    {
-                        break;
-                    }
-                }
-            }
-            catch (Exception)
-            {
-                chain.Clear();
-            }
-
-            if (SelectTarget(chain, allowDockPane) is { } target)
-            {
-                return target;
-            }
-        }
-
-        // In a debug session the hit test can stop at the host window itself, so
-        // descend the real window's tree by point to recover the pane/section.
-        if (fallbackTopLevelWindow != nint.Zero &&
-            Environment.TickCount64 - _lastFallbackTick >= FallbackThrottleMilliseconds)
-        {
-            _lastFallbackTick = Environment.TickCount64;
-            return FindPreviewOverrideInWindow(
-                fallbackTopLevelWindow,
-                screenX,
-                screenY,
-                allowDockPane);
-        }
-
-        return null;
+        _lastQueryTick = now;
+        return FindPreviewOverrideInWindow(topLevelWindow, screenX, screenY, allowDockPane);
     }
 
     private static PreviewOverride? FindPreviewOverrideInWindow(
@@ -210,25 +49,41 @@ internal static class UiAutomationWindowProbe
         double y,
         bool allowDockPane)
     {
-        AutomationElement? element;
+        AutomationElement root;
         try
         {
-            element = AutomationElement.FromHandle(topLevelWindow);
+            root = AutomationElement.FromHandle(topLevelWindow);
         }
         catch (Exception)
         {
             return null;
         }
 
-        WpfRect? pane = null;
-        WpfRect? toolbar = null;
-        WpfRect? section = null;
-        var visited = 0;
-        Search(element, 0);
-
-        if (toolbar is { } toolbarBounds)
+        var paneElement = FindPaneContainer(root, x, y, 0, new Counter());
+        var scanRoot = paneElement ?? root;
+        WpfRect paneBounds;
+        try
         {
-            return new PreviewOverride(toolbarBounds, IsDockPane: false);
+            paneBounds = scanRoot.Current.BoundingRectangle;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+
+        WpfRect? toolbarByType = null;
+        WpfRect? toolbarByShape = null;
+        WpfRect? section = null;
+        ScanAll(scanRoot, 0, new Counter());
+
+        if (toolbarByType is { } typeToolbar)
+        {
+            return new PreviewOverride(typeToolbar, IsDockPane: false);
+        }
+
+        if (toolbarByShape is { } shapedToolbar)
+        {
+            return new PreviewOverride(shapedToolbar, IsDockPane: false);
         }
 
         if (section is { } sectionBounds)
@@ -236,28 +91,89 @@ internal static class UiAutomationWindowProbe
             return new PreviewOverride(sectionBounds, IsDockPane: false);
         }
 
-        if (pane is { } paneBounds)
+        return allowDockPane && paneElement is not null
+            ? new PreviewOverride(paneBounds, IsDockPane: true)
+            : null;
+
+        AutomationElement? FindPaneContainer(
+            AutomationElement element,
+            double pointX,
+            double pointY,
+            int depth,
+            Counter counter)
         {
-            if (allowDockPane)
+            if (depth > MaxDepth || counter.Value >= MaxVisitedElements)
             {
-                return new PreviewOverride(paneBounds, IsDockPane: true);
+                return null;
             }
+
+            counter.Value++;
+            AutomationElement.AutomationElementInformation current;
+            try
+            {
+                current = element.Current;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+
+            var bounds = current.BoundingRectangle;
+            if (!bounds.Contains(pointX, pointY))
+            {
+                return null;
+            }
+
+            if (current.ControlType == ControlType.Pane &&
+                HasArea(bounds) &&
+                HasTitleOrTabChild(element))
+            {
+                return element;
+            }
+
+            AutomationElement? child;
+            try
+            {
+                child = TreeWalker.ControlViewWalker.GetFirstChild(element);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+
+            while (child is not null)
+            {
+                var found = FindPaneContainer(child, pointX, pointY, depth + 1, counter);
+                if (found is not null)
+                {
+                    return found;
+                }
+
+                try
+                {
+                    child = TreeWalker.ControlViewWalker.GetNextSibling(child);
+                }
+                catch (Exception)
+                {
+                    break;
+                }
+            }
+
+            return null;
         }
 
-        return null;
-
-        void Search(AutomationElement currentElement, int depth)
+        void ScanAll(AutomationElement element, int depth, Counter counter)
         {
-            if (depth > MaxAncestorDepth || visited >= MaxVisitedElements)
+            if (depth > MaxDepth || counter.Value >= MaxVisitedElements)
             {
                 return;
             }
 
-            visited++;
+            counter.Value++;
             AutomationElement.AutomationElementInformation current;
             try
             {
-                current = currentElement.Current;
+                current = element.Current;
             }
             catch (Exception)
             {
@@ -265,36 +181,37 @@ internal static class UiAutomationWindowProbe
             }
 
             var bounds = current.BoundingRectangle;
-            if (!bounds.Contains(x, y))
+            if (bounds.Contains(x, y))
             {
-                return;
+                var controlType = current.ControlType;
+                if (toolbarByType is null && controlType == ControlType.ToolBar && HasArea(bounds))
+                {
+                    toolbarByType = bounds;
+                }
+                else if (IsToolbarShape(controlType, bounds, paneBounds) &&
+                         (toolbarByShape is null || Area(toolbarByShape.Value) <= Area(bounds)))
+                {
+                    // Keep the deepest, narrowest top strip: the toolbar row rather
+                    // than its surrounding header block.
+                    toolbarByShape = bounds;
+                }
+
+                if (controlType != ControlType.TitleBar &&
+                    controlType != ControlType.TabItem &&
+                    IsSectionShape(bounds, paneBounds))
+                {
+                    // Deeper large elements are the content section (swimlanes,
+                    // summary tabs, a tree view, ...).
+                    section = bounds;
+                }
             }
 
-            if (toolbar is null &&
-                IsToolbar(current.ControlType.ProgrammaticName, current.ClassName) &&
-                HasArea(bounds))
-            {
-                toolbar = bounds;
-            }
-
-            if (section is null &&
-                IsSection(current.ControlType.ProgrammaticName, current.ClassName) &&
-                HasArea(bounds))
-            {
-                section = bounds;
-            }
-
-            if (pane is null &&
-                IsDockedPane(current.ControlType.ProgrammaticName, current.ClassName) &&
-                HasArea(bounds))
-            {
-                pane = bounds;
-            }
-
+            // The UIA parent chain can report stale rectangles (VS reports some tab
+            // children far outside their parent), so do not prune by ancestor bounds.
             AutomationElement? child;
             try
             {
-                child = TreeWalker.RawViewWalker.GetFirstChild(currentElement);
+                child = TreeWalker.RawViewWalker.GetFirstChild(element);
             }
             catch (Exception)
             {
@@ -303,12 +220,7 @@ internal static class UiAutomationWindowProbe
 
             while (child is not null)
             {
-                if (toolbar is not null && section is not null && pane is not null)
-                {
-                    return;
-                }
-
-                Search(child, depth + 1);
+                ScanAll(child, depth + 1, counter);
                 try
                 {
                     child = TreeWalker.RawViewWalker.GetNextSibling(child);
@@ -321,22 +233,77 @@ internal static class UiAutomationWindowProbe
         }
     }
 
-    private static bool IsDockedPane(string controlTypeName, string className)
+    private sealed class Counter
     {
-        return controlTypeName == "ControlType.Pane" &&
-               DockedPaneClassNames.Contains(className);
+        internal int Value;
     }
 
-    private static bool IsToolbar(string controlTypeName, string className)
+    internal static bool IsToolbarShape(ControlType controlType, WpfRect bounds, WpfRect pane)
     {
-        return controlTypeName == "ControlType.ToolBar" ||
-               className.Contains("toolbar-container", StringComparison.OrdinalIgnoreCase);
+        if (controlType == ControlType.Text ||
+            controlType == ControlType.Button ||
+            controlType == ControlType.TitleBar ||
+            controlType == ControlType.TabItem ||
+            controlType == ControlType.Tab)
+        {
+            return false;
+        }
+
+        return pane.Width > 0 &&
+               pane.Height > 0 &&
+               bounds.Width >= pane.Width * ToolbarMinWidthRatio &&
+               bounds.Height <= pane.Height * ToolbarMaxHeightRatio &&
+               bounds.Top <= pane.Top + pane.Height * ToolbarTopRatio;
     }
 
-    private static bool IsSection(string controlTypeName, string className)
+    internal static bool IsSectionShape(WpfRect bounds, WpfRect pane)
     {
-        return controlTypeName == "ControlType.Tree" ||
-               SectionClassNames.Contains(className);
+        var paneArea = Area(pane);
+        if (paneArea <= 0)
+        {
+            return false;
+        }
+
+        var ratio = Area(bounds) / paneArea;
+        return ratio >= SectionAreaRatio && ratio <= SectionMaxAreaRatio;
+    }
+
+    private static bool HasTitleOrTabChild(AutomationElement element)
+    {
+        AutomationElement? child;
+        try
+        {
+            child = TreeWalker.ControlViewWalker.GetFirstChild(element);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+
+        while (child is not null)
+        {
+            try
+            {
+                var controlType = child.Current.ControlType;
+                if (controlType == ControlType.TitleBar || controlType == ControlType.Tab)
+                {
+                    return true;
+                }
+
+                child = TreeWalker.ControlViewWalker.GetNextSibling(child);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    private static double Area(WpfRect bounds)
+    {
+        return bounds.Width * bounds.Height;
     }
 
     private static bool HasArea(WpfRect bounds)

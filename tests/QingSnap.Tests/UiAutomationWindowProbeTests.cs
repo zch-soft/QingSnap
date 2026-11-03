@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation;
 using QingSnap.App.Services;
 using Xunit;
 
@@ -6,142 +7,57 @@ namespace QingSnap.Tests;
 
 public sealed class UiAutomationWindowProbeTests
 {
-    private static UiAutomationNode Node(
-        string controlType,
-        string className,
-        double left,
-        double top,
-        double width,
-        double height)
+    [Fact]
+    public void ToolbarShapeMatchesTopRowOnly()
     {
-        return new UiAutomationNode(controlType, className, new Rect(left, top, width, height));
+        var pane = new Rect(2052, 153, 461, 1033);
+
+        Assert.True(UiAutomationWindowProbe.IsToolbarShape(
+            ControlType.Group,
+            new Rect(2054, 188, 430, 42),
+            pane));
+
+        // A taller header block is not the toolbar row.
+        Assert.False(UiAutomationWindowProbe.IsToolbarShape(
+            ControlType.Group,
+            new Rect(2054, 188, 430, 107),
+            pane));
+
+        // The whole content host is not a toolbar.
+        Assert.False(UiAutomationWindowProbe.IsToolbarShape(
+            ControlType.Pane,
+            new Rect(2054, 188, 457, 996),
+            pane));
     }
 
     [Fact]
-    public void SolutionExplorerSelectsTabGroupContainerIncludingTabs()
+    public void ToolbarShapeRejectsTextAndButtons()
     {
-        var chain = new[]
-        {
-            Node("ControlType.Tree", "TreeView", 49, 268, 525, 1183),
-            Node("ControlType.Pane", "GenericPane", 49, 268, 525, 1183),
-            Node("ControlType.Pane", "ViewPresenter", 49, 188, 525, 1263),
-            Node("ControlType.TabItem", "TabItem", 47, 1451, 166, 32),
-            Node("ControlType.Tab", "ToolWindowTabGroup", 47, 176, 529, 1306),
-            Node("ControlType.Pane", "ToolWindowTabGroupContainer", 47, 153, 529, 1330),
-            Node("ControlType.Pane", "DockRoot", 38, 144, 2484, 1348),
-            Node("ControlType.Window", "Window", -11, -11, 2582, 1550)
-        };
+        var pane = new Rect(0, 0, 1000, 800);
 
-        var pane = UiAutomationWindowProbe.SelectDockedPane(chain);
-
-        Assert.Equal(new Rect(47, 153, 529, 1330), pane);
+        Assert.False(UiAutomationWindowProbe.IsToolbarShape(
+            ControlType.Text,
+            new Rect(0, 0, 900, 40),
+            pane));
+        Assert.False(UiAutomationWindowProbe.IsToolbarShape(
+            ControlType.Button,
+            new Rect(0, 0, 900, 40),
+            pane));
     }
 
     [Fact]
-    public void SingleToolWindowSelectsViewPresenterIncludingTitleBar()
+    public void SectionShapeUsesPaneAreaRatio()
     {
-        var chain = new[]
-        {
-            Node("ControlType.Pane", "RulersLayer", 1465, 228, 550, 929),
-            Node("ControlType.Pane", "HwndHost", 1465, 228, 550, 929),
-            Node("ControlType.Pane", "GenericPane", 1465, 228, 576, 956),
-            Node("ControlType.Pane", "ViewPresenter", 1463, 153, 580, 1033),
-            Node("ControlType.Pane", "DockRoot", 38, 144, 2484, 1348),
-            Node("ControlType.Window", "Window", -11, -11, 2582, 1550)
-        };
+        var pane = new Rect(2052, 153, 461, 1033);
 
-        var pane = UiAutomationWindowProbe.SelectDockedPane(chain);
-
-        Assert.Equal(new Rect(1463, 153, 580, 1033), pane);
+        Assert.True(UiAutomationWindowProbe.IsSectionShape(
+            new Rect(2054, 188, 457, 519),
+            pane));
+        Assert.True(UiAutomationWindowProbe.IsSectionShape(
+            new Rect(2054, 715, 457, 469),
+            pane));
+        Assert.False(UiAutomationWindowProbe.IsSectionShape(
+            new Rect(2054, 294, 430, 47),
+            pane));
     }
-
-    [Fact]
-    public void EditorWithoutDockedPaneReturnsNull()
-    {
-        var chain = new[]
-        {
-            Node("ControlType.Pane", "DockRoot", 38, 144, 2484, 1348),
-            Node("ControlType.Window", "Window", -11, -11, 2582, 1550)
-        };
-
-        Assert.Null(UiAutomationWindowProbe.SelectDockedPane(chain));
-    }
-
-    [Fact]
-    public void WindowAncestorStopsTheSearch()
-    {
-        var chain = new[]
-        {
-            Node("ControlType.Pane", "ViewPresenter", 0, 0, 100, 100),
-            Node("ControlType.Window", "Window", 0, 0, 500, 500),
-            Node("ControlType.Pane", "ViewPresenter", 0, 0, 800, 800)
-        };
-
-        var pane = UiAutomationWindowProbe.SelectDockedPane(chain);
-
-        Assert.Equal(new Rect(0, 0, 100, 100), pane);
-    }
-
-    [Fact]
-    public void ToolbarWinsOverPaneWhenPointerIsOverToolbar()
-    {
-        var chain = new[]
-        {
-            Node("ControlType.ComboBox", "ComboBox", 1090, 55, 195, 35),
-            Node("ControlType.ToolBar", "ToolBar", 14, 51, 1389, 42),
-            Node("ControlType.Pane", "ToolBarDockTop", 14, 51, 2318, 84),
-            Node("ControlType.Window", "Window", 0, 0, 2560, 1600)
-        };
-
-        var target = UiAutomationWindowProbe.SelectTarget(chain, allowDockPane: true);
-
-        Assert.Equal(new Rect(14, 51, 1389, 42), target!.Value.Bounds);
-        Assert.False(target.Value.IsDockPane);
-    }
-
-    [Fact]
-    public void PaneIsUsedWhenNoToolbarIsUnderPointer()
-    {
-        var chain = new[]
-        {
-            Node("ControlType.Pane", "GenericPane", 1465, 228, 576, 956),
-            Node("ControlType.Pane", "ViewPresenter", 1463, 153, 580, 1033),
-            Node("ControlType.Window", "Window", 0, 0, 2560, 1600)
-        };
-
-        var target = UiAutomationWindowProbe.SelectTarget(chain, allowDockPane: true);
-
-        Assert.Equal(new Rect(1463, 153, 580, 1033), target!.Value.Bounds);
-        Assert.True(target.Value.IsDockPane);
-    }
-
-    [Fact]
-    public void NoTargetForPlainWindowContent()
-    {
-        var chain = new[]
-        {
-            Node("ControlType.Document", "Editor", 0, 100, 1200, 800),
-            Node("ControlType.Window", "Window", 0, 0, 2560, 1600)
-        };
-
-        Assert.Null(UiAutomationWindowProbe.SelectTarget(chain, allowDockPane: true));
-    }
-
-    [Fact]
-    public void SectionWinsOverPaneWhenContentSectionIsPresent()
-    {
-        var chain = new[]
-        {
-            Node("ControlType.Custom", "ScriptedControl", 2054, 188, 457, 519),
-            Node("ControlType.Pane", "GenericPane", 2054, 188, 457, 996),
-            Node("ControlType.Pane", "ViewPresenter", 2052, 153, 461, 1033),
-            Node("ControlType.Window", "Window", 0, 0, 2560, 1600)
-        };
-
-        var target = UiAutomationWindowProbe.SelectTarget(chain, allowDockPane: true);
-
-        Assert.Equal(new Rect(2054, 188, 457, 519), target!.Value.Bounds);
-        Assert.False(target.Value.IsDockPane);
-    }
-
 }
