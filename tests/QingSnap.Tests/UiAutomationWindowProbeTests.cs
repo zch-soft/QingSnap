@@ -93,9 +93,10 @@ public sealed class UiAutomationWindowProbeTests
             Node("ControlType.Window", "Window", 0, 0, 2560, 1600)
         };
 
-        var target = UiAutomationWindowProbe.SelectTarget(chain);
+        var target = UiAutomationWindowProbe.SelectTarget(chain, allowDockPane: true);
 
-        Assert.Equal(new Rect(14, 51, 1389, 42), target);
+        Assert.Equal(new Rect(14, 51, 1389, 42), target!.Value.Bounds);
+        Assert.False(target.Value.IsDockPane);
     }
 
     [Fact]
@@ -108,9 +109,10 @@ public sealed class UiAutomationWindowProbeTests
             Node("ControlType.Window", "Window", 0, 0, 2560, 1600)
         };
 
-        var target = UiAutomationWindowProbe.SelectTarget(chain);
+        var target = UiAutomationWindowProbe.SelectTarget(chain, allowDockPane: true);
 
-        Assert.Equal(new Rect(1463, 153, 580, 1033), target);
+        Assert.Equal(new Rect(1463, 153, 580, 1033), target!.Value.Bounds);
+        Assert.True(target.Value.IsDockPane);
     }
 
     [Fact]
@@ -122,6 +124,41 @@ public sealed class UiAutomationWindowProbeTests
             Node("ControlType.Window", "Window", 0, 0, 2560, 1600)
         };
 
-        Assert.Null(UiAutomationWindowProbe.SelectTarget(chain));
+        Assert.Null(UiAutomationWindowProbe.SelectTarget(chain, allowDockPane: true));
+    }
+
+    [Fact]
+    public void SectionWinsOverPaneWhenContentSectionIsPresent()
+    {
+        var chain = new[]
+        {
+            Node("ControlType.Custom", "ScriptedControl", 2054, 188, 457, 519),
+            Node("ControlType.Pane", "GenericPane", 2054, 188, 457, 996),
+            Node("ControlType.Pane", "ViewPresenter", 2052, 153, 461, 1033),
+            Node("ControlType.Window", "Window", 0, 0, 2560, 1600)
+        };
+
+        var target = UiAutomationWindowProbe.SelectTarget(chain, allowDockPane: true);
+
+        Assert.Equal(new Rect(2054, 188, 457, 519), target!.Value.Bounds);
+        Assert.False(target.Value.IsDockPane);
+    }
+
+    [Fact]
+    public void SolutionExplorerHeuristicSplitsTitleToolbarAndContent()
+    {
+        var pane = new Rect(47, 153, 529, 1330);
+
+        var title = UiAutomationWindowProbe.SplitSolutionExplorer(pane, 160, 1);
+        Assert.True(title.IsDockPane);
+        Assert.Equal(pane, title.Bounds);
+
+        var toolbar = UiAutomationWindowProbe.SplitSolutionExplorer(pane, 200, 1);
+        Assert.False(toolbar.IsDockPane);
+        Assert.Equal(new Rect(47, 176, 529, 54), toolbar.Bounds);
+
+        var content = UiAutomationWindowProbe.SplitSolutionExplorer(pane, 600, 1);
+        Assert.False(content.IsDockPane);
+        Assert.Equal(new Rect(47, 230, 529, 1253), content.Bounds);
     }
 }
