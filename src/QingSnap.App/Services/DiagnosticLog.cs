@@ -13,12 +13,18 @@ public static class DiagnosticLog
 {
     private const long MaximumLogBytes = 4L * 1024L * 1024L;
     private static readonly object Sync = new();
-    private static readonly string LogDirectory = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "QingSnap",
-        "Logs");
-    private static readonly string CurrentLogPath = Path.Combine(LogDirectory, "QingSnap.log");
     private static bool _shutdown;
+
+    internal static string ResolveLogDirectory(
+        string baseDirectory,
+        string? installedDataDirectory = null) =>
+        Path.Combine(
+            PortableModeService.ResolveDataDirectory(baseDirectory, installedDataDirectory),
+            "Logs");
+
+    private static string LogDirectory => ResolveLogDirectory(AppContext.BaseDirectory);
+
+    private static string CurrentLogPath => Path.Combine(LogDirectory, "QingSnap.log");
 
     public static string DirectoryPath => LogDirectory;
 

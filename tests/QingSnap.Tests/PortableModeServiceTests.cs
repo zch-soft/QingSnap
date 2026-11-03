@@ -211,6 +211,31 @@ public sealed class PortableModeServiceTests
         }
     }
 
+    [Fact]
+    public void ResolveLogDirectory_FollowsPortableMode()
+    {
+        var root = CreateRoot();
+        var appDirectory = Path.Combine(root, "app");
+        var installedDirectory = Path.Combine(root, "local");
+        try
+        {
+            Assert.Equal(
+                Path.Combine(PortableModeService.GetPortableDataDirectory(appDirectory), "Logs"),
+                DiagnosticLog.ResolveLogDirectory(appDirectory, installedDirectory));
+
+            Directory.CreateDirectory(appDirectory);
+            File.WriteAllText(PortableModeService.OptOutPath(appDirectory), string.Empty);
+
+            Assert.Equal(
+                Path.Combine(installedDirectory, "Logs"),
+                DiagnosticLog.ResolveLogDirectory(appDirectory, installedDirectory));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static string CreateRoot()
     {
         var path = Path.Combine(Path.GetTempPath(), "QingSnap.Tests", "portable", Guid.NewGuid().ToString("N"));
