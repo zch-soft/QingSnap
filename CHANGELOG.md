@@ -3,6 +3,26 @@
 本文件记录 QingSnap 各公开预览版本的重要变化。
 This file documents notable changes in each public QingSnap preview release.
 
+## [2.0.3] - 2026-11-03
+
+### 便携模式 / Portable mode
+
+- 便携模式下日志改写入数据目录 `Data\Logs`，与配置、历史、OCR 模型放在一起，便于整体备份或搬移；卸载时也能在便携目录找到日志。  In portable mode, logs now live in `Data\Logs` beside the configuration, history, and OCR models so the portable folder can be backed up or moved as a whole; uninstall also looks there.
+
+### 智能窗口选择 / Smart window selection
+
+- 修复智能选区只能命中整个桌面、以及无法识别带标题栏的停靠工具窗口的问题。  Fixed smart selection matching only the whole desktop and failing to recognize docked tool windows with a title bar.
+- 修复停靠面板只能整体选中，现在可以细分到工具栏与内容区块；同时修复校正预览被后续鼠标移动覆盖、校正防抖不生效。  Fixed docked panels being selectable only as a whole, with toolbars and content blocks now selectable, and corrected previews no longer overwritten by later pointer movement or skipped by debounce.
+- 智能选区改为按 UI Automation 控件类型、层级与几何规则判断，移除 Visual Studio 专有类名与 Solution Explorer 固定坐标。  Smart selection now works from UI Automation control types, hierarchy, and geometry only, with Visual Studio specific class names and Solution Explorer coordinates removed.
+
+### 截图与选区 / Capture and selection
+
+- 修复截图遮罩在鼠标离开选区后失效、工具栏消失，以及选区列表删除按钮与点击切换失效。  Fixed the capture mask becoming ineffective with the toolbar gone once the pointer leaves the selection, and the selection list's delete button and click-to-switch.
+
+### 质量 / Quality
+
+- 自动化测试：243 / 243 通过；Release 编译：0 Warning / 0 Error。  All 243 automated tests pass, with zero Release build warnings and errors.
+
 ## [2.0.2] - 2026-11-01
 
 ### 便携模式 / Portable mode
@@ -328,6 +348,7 @@ This index covers every local preview build between public releases. `Internal i
 | v1 | 2026-08-19 | 区域截图、重复范围、自动复制、历史保存、托盘与单实例 / region capture, repeat region, automatic copy, history storage, tray, and single instance |
 
 [Preview v48]: https://github.com/za5132-web/QingSnap/compare/preview-v47...preview-v48
+[2.0.3]: https://github.com/zch-soft/QingSnap/compare/zch-v2.0.2...zch-v2.0.3
 [2.0.2]: https://github.com/zch-soft/QingSnap/compare/zch-v2.0.1...zch-v2.0.2
 [2.0.1]: https://github.com/zch-soft/QingSnap/compare/zch-v2.0.0...zch-v2.0.1
 [2.0.0]: https://github.com/zch-soft/QingSnap/compare/v1.1.1...zch-v2.0.0
