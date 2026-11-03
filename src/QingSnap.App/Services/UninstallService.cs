@@ -39,7 +39,9 @@ public sealed class UninstallService
             "QingSnap",
             "state.json"));
         _appDataDirectory = Path.GetDirectoryName(_statePath)!;
-        _logDirectory = Path.GetFullPath(logDirectory ?? Path.Combine(_appDataDirectory, "Logs"));
+        _logDirectory = Path.GetFullPath(logDirectory ?? Path.Combine(
+            PortableModeService.ResolveDataDirectory(AppContext.BaseDirectory),
+            "Logs"));
         _tempDirectory = Path.GetFullPath(tempDirectory ?? Path.GetTempPath());
     }
 
