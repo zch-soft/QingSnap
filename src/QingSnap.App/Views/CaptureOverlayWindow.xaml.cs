@@ -73,6 +73,8 @@ public partial class CaptureOverlayWindow : Window
     private bool _smartPreviewOverrideIsDockPane;
     private NativeMethods.NativeRectangle? _smartPreviewBaseBounds;
     private nint _smartPreviewFallbackWindow;
+    private int _smartPreviewRefineGeneration;
+    private bool _smartPreviewRefineInFlight;
     private WpfRect _pendingSmartSelection = WpfRect.Empty;
     private bool _dragMoved;
     private MediaColor _currentPixelColor;
@@ -403,6 +405,11 @@ public partial class CaptureOverlayWindow : Window
         _pendingSmartSelection = WpfRect.Empty;
         _dragCreatedSelection = false;
 
+        // 拖拽期间不再需要智能选区：立刻作废仍在后台跑的 UIA 查询，
+        // 不让按下与移动排在它后面。
+        _smartPreviewProbeTimer.Stop();
+        _smartPreviewRefineGeneration++;
+
         var hitIndex = FindSelectionAt(point);
         // Ctrl keeps Alt free for the existing "resize from center" gesture.
         if (modifiers.HasFlag(ModifierKeys.Control))
@@ -441,7 +448,7 @@ public partial class CaptureOverlayWindow : Window
             // Adopt the preview immediately so a normal click cannot collapse into a
             // one-pixel drag if Windows delivers a synthetic move between down/up.
             // A deliberate drag still switches back to free-form selection below.
-            TryRefineSmartPreviewToElement(point);
+            // UIA 元素细化只在悬停时后台进行，按下时绝不等待它。
             _pendingSmartSelection = _smartPreview;
             BeginNewSelection(_smartPreview);
             _dragCreatedSelection = true;
@@ -2770,30 +2777,87 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
-        TryRefineSmartPreviewToElement(pointer);
+        ScheduleSmartPreviewRefine(pointer);
     }
 
-    private bool TryRefineSmartPreviewToElement(Point pointer)
+    // UIA 遍历是跨进程 COM 调用，可能阻塞数百毫秒。它会卡住 UI 线程，让按下和
+    // 拖动画矩形排在其后。放到后台线程执行，结果回到 UI 线程时再校验：只要
+    // 用户已开始拖拽、预览已变化或查询已作废就丢弃结果。
+    private void ScheduleSmartPreviewRefine(Point pointer)
     {
+        if (_smartPreviewRefineInFlight ||
+            _smartPreview.IsEmpty ||
+            _smartPreviewFallbackWindow == nint.Zero ||
+            _smartPreviewBaseBounds is not { } baseBounds)
+        {
+            return;
+        }
+
         var scaleX = _snapshot.Bounds.Width / Math.Max(1, Surface.ActualWidth);
         var scaleY = _snapshot.Bounds.Height / Math.Max(1, Surface.ActualHeight);
         var physicalX = _snapshot.Bounds.X + (int)Math.Round(pointer.X * scaleX);
         var physicalY = _snapshot.Bounds.Y + (int)Math.Round(pointer.Y * scaleY);
-        if (UiAutomationWindowProbe.GetPreviewOverrideAtPoint(
-                _smartPreviewFallbackWindow,
-                physicalX,
-                physicalY,
-                allowDockPane: !_smartPreviewOverChildWindow) is not { } target)
+        var fallbackWindow = _smartPreviewFallbackWindow;
+        var overChildWindow = _smartPreviewOverChildWindow;
+        var preview = _smartPreview;
+        var generation = ++_smartPreviewRefineGeneration;
+        _smartPreviewRefineInFlight = true;
+
+        _ = Task.Run(() =>
+        {
+            PreviewOverride? target;
+            try
+            {
+                target = UiAutomationWindowProbe.GetPreviewOverrideAtPoint(
+                    fallbackWindow,
+                    physicalX,
+                    physicalY,
+                    allowDockPane: !overChildWindow);
+            }
+            catch (Exception exception)
+            {
+                DiagnosticLog.Warning("智能选区", $"UIA 元素细化失败：{exception.Message}");
+                target = null;
+            }
+
+            if (Dispatcher.HasShutdownStarted)
+            {
+                return;
+            }
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _smartPreviewRefineInFlight = false;
+                if (generation != _smartPreviewRefineGeneration ||
+                    _dragMode != DragMode.None ||
+                    _smartPreview != preview ||
+                    _smartPreviewFallbackWindow != fallbackWindow ||
+                    Mouse.LeftButton == MouseButtonState.Pressed ||
+                    Mouse.RightButton == MouseButtonState.Pressed)
+                {
+                    return;
+                }
+
+                ApplySmartPreviewOverride(target, overChildWindow, baseBounds);
+            }));
+        });
+    }
+
+    private bool ApplySmartPreviewOverride(
+        PreviewOverride? target,
+        bool overChildWindow,
+        NativeMethods.NativeRectangle baseBounds)
+    {
+        if (target is not { } overrideTarget)
         {
             return false;
         }
 
         // 快路径已命中真实子窗口时，UIA 只能向下细化。否则包含该子窗口的祖先
         // 容器会把预览放大（资源管理器的目录树会被“目录树 + 文件列表”覆盖）。
-        if (_smartPreviewOverChildWindow &&
-            _smartPreviewBaseBounds is { } baseBounds &&
+        if (overChildWindow &&
             !UiAutomationWindowProbe.IsDownwardRefinement(
-                target.Bounds,
+                overrideTarget.Bounds,
                 new WpfRect(
                     baseBounds.Left,
                     baseBounds.Top,
@@ -2806,15 +2870,15 @@ public partial class CaptureOverlayWindow : Window
         var applied = ApplySmartPreviewBounds(
             new NativeMethods.NativeRectangle
             {
-                Left = (int)Math.Round(target.Bounds.Left),
-                Top = (int)Math.Round(target.Bounds.Top),
-                Right = (int)Math.Round(target.Bounds.Right),
-                Bottom = (int)Math.Round(target.Bounds.Bottom)
+                Left = (int)Math.Round(overrideTarget.Bounds.Left),
+                Top = (int)Math.Round(overrideTarget.Bounds.Top),
+                Right = (int)Math.Round(overrideTarget.Bounds.Right),
+                Bottom = (int)Math.Round(overrideTarget.Bounds.Bottom)
             },
             isElementOverride: true);
         if (applied)
         {
-            _smartPreviewOverrideIsDockPane = target.IsDockPane;
+            _smartPreviewOverrideIsDockPane = overrideTarget.IsDockPane;
         }
 
         return applied;
