@@ -2402,7 +2402,15 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnMatrixParameterKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (e.Key == Key.Enter)
+        var key = ResolveShortcutKey(e);
+        if (key == Key.Escape)
+        {
+            CancelSelection();
+            e.Handled = true;
+            return;
+        }
+
+        if (key == Key.Enter)
         {
             WriteMatrixFields();
             Focus();

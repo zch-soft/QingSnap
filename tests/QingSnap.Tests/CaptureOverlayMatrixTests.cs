@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -159,6 +160,71 @@ public sealed class CaptureOverlayMatrixTests
             }
 
             return true;
+        });
+    }
+
+    [Fact]
+    public void EscapeInMatrixParameterFieldsCancelsCaptureAndEnterOnlyCommitsTheInput()
+    {
+        _ = RunInSta(() =>
+        {
+            EnsureApplicationResources();
+            var snapshot = new ScreenSnapshot(
+                new DrawingRectangle(0, 0, 300, 300),
+                CreateImage(300, 300));
+            var window = new CaptureOverlayWindow(
+                snapshot,
+                showActionToolbar: true,
+                settings: new AppSettings());
+            try
+            {
+                window.Width = 300;
+                window.Height = 300;
+                window.Show();
+                window.UpdateLayout();
+                window.LoadSelectionSet(new SelectionSet(
+                    SelectionMode.Matrix,
+                    [],
+                    new MatrixSpec(new CaptureRegion(0, 0, 300, 300), 3, 3, 4, 9)));
+                window.UpdateLayout();
+
+                var cancelled = 0;
+                var confirmed = 0;
+                window.SelectionCancelled += (_, _) => cancelled++;
+                window.SelectionConfirmed += (_, _) => confirmed++;
+
+                var rowGapBox = window.MatrixRowGapBox;
+                window.Activate();
+                rowGapBox.Focus();
+                Keyboard.Focus(rowGapBox);
+                Assert.Same(rowGapBox, Keyboard.FocusedElement);
+
+                rowGapBox.Text = "20";
+                RaisePreviewKeyDown(rowGapBox, Key.Enter);
+                Assert.Equal(0, confirmed);
+                Assert.Equal(0, cancelled);
+                Assert.Equal("20", rowGapBox.Text);
+
+                RaisePreviewKeyDown(rowGapBox, Key.Escape);
+                Assert.Equal(1, cancelled);
+                Assert.Equal(0, confirmed);
+            }
+            finally
+            {
+                window.Close();
+            }
+
+            return true;
+        });
+    }
+
+    private static void RaisePreviewKeyDown(UIElement target, Key key)
+    {
+        var source = PresentationSource.FromVisual(target);
+        Assert.NotNull(source);
+        target.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, key)
+        {
+            RoutedEvent = Keyboard.PreviewKeyDownEvent
         });
     }
 
