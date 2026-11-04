@@ -107,6 +107,62 @@ public sealed class CaptureOverlayMatrixTests
     }
 
     [Fact]
+    public void RowAndColumnGapFieldsKeepTheirOwnValuesAcrossFocusLoss()
+    {
+        _ = RunInSta(() =>
+        {
+            EnsureApplicationResources();
+            var snapshot = new ScreenSnapshot(
+                new DrawingRectangle(0, 0, 300, 300),
+                CreateImage(300, 300));
+            var window = new CaptureOverlayWindow(
+                snapshot,
+                showActionToolbar: true,
+                settings: new AppSettings());
+            try
+            {
+                window.Width = 300;
+                window.Height = 300;
+                window.Show();
+                window.UpdateLayout();
+                window.LoadSelectionSet(new SelectionSet(
+                    SelectionMode.Matrix,
+                    [],
+                    new MatrixSpec(new CaptureRegion(0, 0, 300, 300), 3, 3, 4, 9)));
+                window.UpdateLayout();
+
+                Assert.Equal("9", window.MatrixRowGapBox.Text);
+                Assert.Equal("4", window.MatrixColumnGapBox.Text);
+
+                window.MatrixRowGapBox.Text = "20";
+                window.MatrixRowGapBox.RaiseEvent(new RoutedEventArgs(
+                    System.Windows.UIElement.LostFocusEvent));
+
+                Assert.Equal("20", window.MatrixRowGapBox.Text);
+                Assert.Equal("4", window.MatrixColumnGapBox.Text);
+
+                window.MatrixColumnGapBox.Text = "6";
+                window.MatrixColumnGapBox.RaiseEvent(new RoutedEventArgs(
+                    System.Windows.UIElement.LostFocusEvent));
+
+                Assert.Equal("20", window.MatrixRowGapBox.Text);
+                Assert.Equal("6", window.MatrixColumnGapBox.Text);
+
+                var output = window.CreateSelectionOutput();
+                Assert.NotNull(output?.Matrix);
+                Assert.Equal(20, output!.Matrix!.GapY);
+                Assert.Equal(6, output.Matrix.GapX);
+            }
+            finally
+            {
+                window.Close();
+            }
+
+            return true;
+        });
+    }
+
+    [Fact]
     public void SmartPreviewKeepsShadeAndToolbarWhileSelectionExists()
     {
         _ = RunInSta(() =>

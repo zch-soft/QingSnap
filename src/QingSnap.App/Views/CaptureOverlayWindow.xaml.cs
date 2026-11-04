@@ -2275,8 +2275,8 @@ public partial class CaptureOverlayWindow : Window
         _updatingMatrixFields = true;
         MatrixRowsBox.Text = _matrix.Rows.ToString();
         MatrixColumnsBox.Text = _matrix.Columns.ToString();
-        MatrixRowGapBox.Text = _matrix.GapX.ToString();
-        MatrixColumnGapBox.Text = _matrix.GapY.ToString();
+        MatrixRowGapBox.Text = _matrix.GapY.ToString();
+        MatrixColumnGapBox.Text = _matrix.GapX.ToString();
         _updatingMatrixFields = false;
         SetMatrixFieldState(MatrixRowsBox, MatrixFieldState.Normal);
         SetMatrixFieldState(MatrixColumnsBox, MatrixFieldState.Normal);
