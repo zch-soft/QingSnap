@@ -3,6 +3,25 @@
 本文件记录 QingSnap 各公开预览版本的重要变化。
 This file documents notable changes in each public QingSnap preview release.
 
+## [2.0.4] - 2026-11-04
+
+### 智能窗口选择 / Smart window selection
+
+- 修复悬停在资源管理器目录树等子窗口上时，预览被放大成包含文件列表的整个容器且不再恢复；UIA 结果现在只允许在快路径命中的子窗口内向下细化。  Fixed the preview expanding to the whole container, such as Explorer's folder tree plus file list, and never shrinking back; UI Automation results may now only refine inside the sub-window matched by the fast path.
+
+### 截图交互 / Capture interaction
+
+- 修复拖画矩形选区时明显滞后的问题：智能选区的 UIA 细化移到后台线程，开始拖拽后不再等待探测结果。  Fixed obvious lag while dragging a rectangle; UI Automation refinement now runs on a background thread and is abandoned once dragging starts.
+
+### 矩阵截图 / Matrix capture
+
+- 修复矩阵参数输入框获得焦点时 `Esc` 无法退出截图；`Enter` 仍然只提交输入框数值。  Fixed `Esc` not exiting capture while a matrix parameter field had focus; `Enter` still only commits the field value.
+- 修复矩阵面板失焦后行间隔与列间隔数值互换。  Fixed row and column gaps swapping after the matrix panel lost focus.
+
+### 质量 / Quality
+
+- 自动化测试：247 / 247 通过；Release 编译：0 Warning / 0 Error。  All 247 automated tests pass, with zero Release build warnings and errors.
+
 ## [2.0.3] - 2026-11-03
 
 ### 便携模式 / Portable mode
@@ -348,6 +367,7 @@ This index covers every local preview build between public releases. `Internal i
 | v1 | 2026-08-19 | 区域截图、重复范围、自动复制、历史保存、托盘与单实例 / region capture, repeat region, automatic copy, history storage, tray, and single instance |
 
 [Preview v48]: https://github.com/za5132-web/QingSnap/compare/preview-v47...preview-v48
+[2.0.4]: https://github.com/zch-soft/QingSnap/compare/zch-v2.0.3...zch-v2.0.4
 [2.0.3]: https://github.com/zch-soft/QingSnap/compare/zch-v2.0.2...zch-v2.0.3
 [2.0.2]: https://github.com/zch-soft/QingSnap/compare/zch-v2.0.1...zch-v2.0.2
 [2.0.1]: https://github.com/zch-soft/QingSnap/compare/zch-v2.0.0...zch-v2.0.1
