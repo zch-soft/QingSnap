@@ -71,6 +71,7 @@ public partial class CaptureOverlayWindow : Window
     private bool _smartPreviewIsElementOverride;
     private bool _smartPreviewOverChildWindow;
     private bool _smartPreviewOverrideIsDockPane;
+    private NativeMethods.NativeRectangle? _smartPreviewBaseBounds;
     private nint _smartPreviewFallbackWindow;
     private WpfRect _pendingSmartSelection = WpfRect.Empty;
     private bool _dragMoved;
@@ -1432,6 +1433,7 @@ public partial class CaptureOverlayWindow : Window
         _smartPreview = WpfRect.Empty;
         _smartPreviewIsElementOverride = false;
         _smartPreviewOverrideIsDockPane = false;
+        _smartPreviewBaseBounds = null;
         SmartPreviewBorder.Visibility = Visibility.Collapsed;
 
         var item = ActiveSelection;
@@ -2716,6 +2718,7 @@ public partial class CaptureOverlayWindow : Window
 
         _smartPreviewFallbackWindow = NativeMethods.GetAncestor(target, NativeMethods.GetAncestorRoot);
         _smartPreviewOverChildWindow = target != _smartPreviewFallbackWindow;
+        _smartPreviewBaseBounds = windowRect;
         if (_smartPreviewIsElementOverride &&
             _smartPreview.Contains(point) &&
             (!_smartPreviewOverChildWindow || !_smartPreviewOverrideIsDockPane))
@@ -2781,6 +2784,21 @@ public partial class CaptureOverlayWindow : Window
                 physicalX,
                 physicalY,
                 allowDockPane: !_smartPreviewOverChildWindow) is not { } target)
+        {
+            return false;
+        }
+
+        // 快路径已命中真实子窗口时，UIA 只能向下细化。否则包含该子窗口的祖先
+        // 容器会把预览放大（资源管理器的目录树会被“目录树 + 文件列表”覆盖）。
+        if (_smartPreviewOverChildWindow &&
+            _smartPreviewBaseBounds is { } baseBounds &&
+            !UiAutomationWindowProbe.IsDownwardRefinement(
+                target.Bounds,
+                new WpfRect(
+                    baseBounds.Left,
+                    baseBounds.Top,
+                    baseBounds.Right - baseBounds.Left,
+                    baseBounds.Bottom - baseBounds.Top)))
         {
             return false;
         }
@@ -2866,6 +2884,7 @@ public partial class CaptureOverlayWindow : Window
         _smartPreview = WpfRect.Empty;
         _smartPreviewIsElementOverride = false;
         _smartPreviewOverrideIsDockPane = false;
+        _smartPreviewBaseBounds = null;
         SmartPreviewBorder.Visibility = Visibility.Collapsed;
         UpdateShadeMask();
         if (ActiveSelection is not null)
@@ -2949,6 +2968,7 @@ public partial class CaptureOverlayWindow : Window
         _smartPreview = WpfRect.Empty;
         _smartPreviewIsElementOverride = false;
         _smartPreviewOverrideIsDockPane = false;
+        _smartPreviewBaseBounds = null;
         _lockedSelectionSize = null;
         UpdateFixedSizeUi();
         SelectionBorder.Visibility = Visibility.Collapsed;

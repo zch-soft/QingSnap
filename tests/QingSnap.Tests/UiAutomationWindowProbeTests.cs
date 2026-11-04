@@ -60,4 +60,37 @@ public sealed class UiAutomationWindowProbeTests
             new Rect(2054, 294, 430, 47),
             pane));
     }
+
+    [Fact]
+    public void DownwardRefinementRejectsAncestorContainer()
+    {
+        var navigationTree = new Rect(100, 200, 300, 600);
+        var wholeClientArea = new Rect(0, 100, 1200, 800);
+
+        Assert.True(UiAutomationWindowProbe.IsDownwardRefinement(
+            new Rect(110, 220, 280, 500),
+            navigationTree));
+        Assert.True(UiAutomationWindowProbe.IsDownwardRefinement(
+            navigationTree,
+            navigationTree));
+        Assert.False(UiAutomationWindowProbe.IsDownwardRefinement(
+            wholeClientArea,
+            navigationTree));
+    }
+
+    [Fact]
+    public void DownwardRefinementToleratesDpiRounding()
+    {
+        var child = new Rect(100, 200, 300, 600);
+
+        Assert.True(UiAutomationWindowProbe.IsDownwardRefinement(
+            new Rect(99, 201, 302, 598),
+            child));
+        Assert.False(UiAutomationWindowProbe.IsDownwardRefinement(
+            new Rect(90, 200, 300, 600),
+            child));
+        Assert.False(UiAutomationWindowProbe.IsDownwardRefinement(
+            new Rect(100, 200, 300, 620),
+            child));
+    }
 }

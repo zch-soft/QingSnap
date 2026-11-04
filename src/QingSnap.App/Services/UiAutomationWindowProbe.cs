@@ -20,6 +20,7 @@ internal static class UiAutomationWindowProbe
     private const double ToolbarMaxHeightRatio = 0.08;
     private const double ToolbarMinWidthRatio = 0.70;
     private const double ToolbarTopRatio = 0.08;
+    private const double RefinementTolerance = 2;
     private static long _lastQueryTick;
 
     internal static PreviewOverride? GetPreviewOverrideAtPoint(
@@ -266,6 +267,16 @@ internal static class UiAutomationWindowProbe
 
         var ratio = Area(bounds) / paneArea;
         return ratio >= SectionAreaRatio && ratio <= SectionMaxAreaRatio;
+    }
+
+    internal static bool IsDownwardRefinement(WpfRect candidate, WpfRect current)
+    {
+        return !candidate.IsEmpty &&
+               !current.IsEmpty &&
+               candidate.Left >= current.Left - RefinementTolerance &&
+               candidate.Top >= current.Top - RefinementTolerance &&
+               candidate.Right <= current.Right + RefinementTolerance &&
+               candidate.Bottom <= current.Bottom + RefinementTolerance;
     }
 
     private static bool HasTitleOrTabChild(AutomationElement element)
